@@ -221,7 +221,7 @@ test('ratchet_checkpoint：校验器跑不起来时如实写跳过', async () =>
 	const env = makeEnv()
 	await env.tool('ratchet_checkpoint').execute({ stage: '第一段', summary: '做完了' }, env.exec)
 	const detail = env.panels[0].questions[0].detail
-	assert.match(detail, /\*\*文档校验\*\*/)
+	assert.match(detail, /#### 文档校验/)
 	assert.match(detail, /术语表 –/)
 })
 
@@ -232,7 +232,7 @@ test('ratchet_checkpoint：正文带上「定下的」，空白条目被过滤',
 		env.exec,
 	)
 	const detail = env.panels[0].questions[0].detail
-	assert.match(detail, /\*\*定下的\*\*/)
+	assert.match(detail, /#### 定下的/)
 	assert.match(detail, /- 不引入 OCR/)
 	assert.match(detail, /- 只用 stdlib/)
 	assert.doesNotMatch(detail, /^- *$/mu)

@@ -71,7 +71,7 @@ export function renderStartDetail({ brief, info }) {
  */
 export function renderArtifacts(artifacts) {
 	const list = Array.isArray(artifacts) ? artifacts : []
-	if (list.length === 0) return '**产出**\n\n（这一段没有落任何文件）'
+	if (list.length === 0) return '#### 产出\n\n（这一段没有落任何文件）'
 	const lines = list.map((item) => {
 		if (item.exists !== true) {
 			const where = typeof item.resolved === 'string' && item.resolved !== '' ? `（按 \`${item.resolved}\` 找过）` : ''
@@ -86,7 +86,7 @@ export function renderArtifacts(artifacts) {
 		const extra = [detail, item.note].filter((part) => typeof part === 'string' && part !== '').join(' · ')
 		return `- \`${item.entry}\`${extra === '' ? '' : ` · ${extra}`}`
 	})
-	return `**产出**\n\n${lines.join('\n')}`
+	return `#### 产出\n\n${lines.join('\n')}`
 }
 
 /**
@@ -98,21 +98,24 @@ export function renderDecisions(decisions) {
 		.filter((each) => typeof each === 'string' && each.trim() !== '')
 		.map((each) => each.trim())
 	if (clean.length === 0) return ''
-	return `**定下的**\n\n${clean.map((each) => `- ${each}`).join('\n')}`
+	return `#### 定下的\n\n${clean.map((each) => `- ${each}`).join('\n')}`
 }
 
 /**
  * 校验结论压成一行徽章：术语表 ✓　ADR ✓　一致性 !
+ *
+ * 用 `####` 而不是粗体段落：面板上四个分区（产出 / 定下的 / 文档校验 / 提示）
+ * 都靠标题撑出层级，粗体只有 600 字重，在 13px 正文里几乎看不出来。
  * @param {{results: Array<{name:string, verdict?:string, skipped?:boolean}>}} outcome
  */
 export function renderCheckBadges(outcome) {
 	const results = Array.isArray(outcome?.results) ? outcome.results : []
-	if (results.length === 0) return '**文档校验**　没有可跑的校验器'
+	if (results.length === 0) return '#### 文档校验\n\n没有可跑的校验器'
 	const parts = results.map((result) => {
 		const mark = result.skipped === true ? VERDICT_MARK.SKIP : (VERDICT_MARK[result.verdict] ?? '?')
 		return `${shortCheckName(result.name)} ${mark}`
 	})
-	return `**文档校验**　${parts.join('　')}`
+	return `#### 文档校验\n\n${parts.join('　')}`
 }
 
 /**

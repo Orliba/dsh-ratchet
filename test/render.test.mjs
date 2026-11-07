@@ -159,7 +159,7 @@ test('checkpoint 正文三段齐全：结论、产出与取舍、校验', () => 
 	assert.match(text, /第 2 段 · 接入校验器/)
 	assert.match(text, /把三个 linter 接进来/)
 	assert.match(text, /`plugin\/validators\.mjs` · 337 行/)
-	assert.match(text, /定下的/)
+	assert.match(text, /#### 定下的/)
 	assert.match(text, /术语表 ✓/)
 	assert.match(text, /\*\*下段\*\*　补回归测试/)
 	// 段间用 hr 切开，长正文才有可视分层。
@@ -231,4 +231,25 @@ test('checkpoint 正文不含原始 HTML 与任务列表 —— MarkdownText 不
 test('短名映射是纯展示，未知名字原样返回', () => {
 	assert.equal(shortCheckName('CONTEXT.md 术语表'), '术语表')
 	assert.equal(shortCheckName('不认识的名字'), '不认识的名字')
+})
+
+test('分区标签用四级标题，不是粗体段落 —— 粗体在 13px 正文里分不出层级', () => {
+	const text = renderCheckpointDetail({
+		stageIndex: 1,
+		stage: 's',
+		summary: 'x',
+		artifacts: [{ entry: 'a', exists: true, lines: 1 }],
+		decisions: ['d'],
+		checks: CHECKS,
+	})
+	for (const label of ['产出', '定下的', '文档校验']) {
+		assert.match(text, new RegExp(`^#### ${label}$`, 'm'), `「${label}」应该是四级标题`)
+		assert.doesNotMatch(text, new RegExp(`^\\*\\*${label}\\*\\*`, 'm'), `「${label}」不该退回粗体段落`)
+	}
+})
+
+test('校验徽章没有校验器时也给四级标题，形状和别处一致', () => {
+	const text = renderCheckBadges({ results: [] })
+	assert.match(text, /^#### 文档校验$/m)
+	assert.match(text, /没有可跑的校验器/)
 })

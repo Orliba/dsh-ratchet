@@ -165,12 +165,16 @@ window.__ModuleLoader__.load({
 }
 
 /* ── 问题面板正文：宿主只给 margin:0 2px 8px，长 markdown 会糊成一片 ── */
+/* 三层区分：卡片 #2c2c2e → 正文块 #353638（亮一档）+ 左侧 3px 主色条。
+   边框用 l3（#ffffff29）而不是 l1（#ffffff0f）—— l1 在深底上几乎看不见，
+   只靠亮度差会让人以为"还是一整块"。 */
 [data-question-key] [data-question-scroll] > div:first-child:not([role]) {
 	margin: 12px 14px 4px;
-	padding: 12px 14px;
+	padding: 12px 14px 12px 15px;
 	border-radius: var(--dsw-radius-lg);
 	background: var(--dsw-alias-bg-module-platform);
-	border: 1px solid var(--dsw-alias-border-l1);
+	border: 1px solid var(--dsw-alias-border-l3);
+	border-left: 3px solid var(--dsw-alias-state-business-primary);
 }
 [data-question-key] [data-question-scroll] > div:first-child:not([role]) > :first-child { margin-top: 0; }
 [data-question-key] [data-question-scroll] > div:first-child:not([role]) > :last-child { margin-bottom: 0; }
@@ -181,6 +185,16 @@ window.__ModuleLoader__.load({
 	font-weight: 600;
 	color: var(--dsw-alias-label-primary);
 }
+/* 四级标题当分区标签用：小字号 + 字距 + tertiary 灰。
+   它和正文同字号时只能靠字重区分，在深色底上几乎看不出来。 */
+[data-question-key] [data-question-scroll] > div:first-child:not([role]) h4 {
+	margin: 14px 0 5px;
+	font-size: 11px;
+	line-height: 16px;
+	font-weight: 600;
+	letter-spacing: .06em;
+	color: var(--dsw-alias-label-tertiary);
+}
 [data-question-key] [data-question-scroll] > div:first-child:not([role]) :is(h1, h2, h3, h4):first-child { margin-top: 0; }
 [data-question-key] [data-question-scroll] > div:first-child:not([role]) p,
 [data-question-key] [data-question-scroll] > div:first-child:not([role]) :is(ul, ol) {
@@ -190,10 +204,11 @@ window.__ModuleLoader__.load({
 }
 [data-question-key] [data-question-scroll] > div:first-child:not([role]) :is(ul, ol) { padding-left: 18px; }
 [data-question-key] [data-question-scroll] > div:first-child:not([role]) li:not(:first-child) { margin-top: 3px; }
+/* 有了四级标题当分区标签，hr 就不用再当分隔主力，压淡一点免得两重分隔打架。 */
 [data-question-key] [data-question-scroll] > div:first-child:not([role]) hr {
-	margin: 12px 0;
+	margin: 10px 0;
 	height: .5px;
-	background: var(--dsw-alias-border-l2);
+	background: var(--dsw-alias-border-l1);
 }
 [data-question-key] [data-question-scroll] > div:first-child:not([role]) blockquote {
 	margin: 10px 0 0;
