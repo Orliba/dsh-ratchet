@@ -1,0 +1,14 @@
+# 装进 profile 时由 dsh.bundle.patch 指向这里。
+# id 必须是 `ratchet`：设置页的命名空间就是这个 entry id（dsh-settings 按
+# `configEditor.entries().find(row => row.options.id === ns)` 定位），改名会让
+# 「设置 → 插件 → dsh-ratchet → 配置」整页消失。
+- insert:
+    - id: ratchet
+      name: dsh-ratchet
+      config:
+        enabled: true
+        maxQuestions: 5
+        validatorTimeoutMs: 20000
+        stageLimit: 5
+        # pythonPath: ''   # 留空则自动探测 python / python3 / py -3 / DSH 自带运行时
+        # policyText: ''    # 留空用内置的六条纪律

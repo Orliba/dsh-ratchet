@@ -1,0 +1,49 @@
+{
+  "name": "dsh-ratchet",
+  "version": "0.2.0",
+  "description": "Ratchet for DeepSeek Harness: align direction in a question panel before work starts, deliver in stages, and force a review checkpoint (with CONTEXT.md / ADR / glossary lint) before the next stage.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./plugin/index.mjs",
+  "exports": {
+    ".": "./plugin/index.mjs",
+    "./client": "./plugin/client.js",
+    "./config": "./plugin/config.mjs",
+    "./state": "./plugin/state.mjs",
+    "./validators": "./plugin/validators.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "plugin",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "grill-with-docs",
+    "planning",
+    "checkpoint"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [],
+      "immediately": true
+    }
+  },
+  "scripts": {
+    "check": "node --check plugin/index.mjs && node --check plugin/config.mjs && node --check plugin/state.mjs && node --check plugin/validators.mjs && node --check plugin/render.mjs && node --check plugin/client.js",
+    "test": "node --import ./test/register.mjs --test test/*.test.mjs"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/schemastery": "^3.18.4"
+  }
+}

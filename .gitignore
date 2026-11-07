@@ -1,0 +1,7 @@
+node_modules/
+*.log
+.pnpm-store/
+_*.mjs
+_*.cjs
+_*.png
+.DS_Store
