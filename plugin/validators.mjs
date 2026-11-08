@@ -242,6 +242,11 @@ async function checkGlossary(ctx) {
 function collapse(run, fallback) {
 	if (run.timedOut) return '超时'
 	const stderr = (run.stderr ?? '').trim().split('\n')[0]
+	if (stderr === 'aborted') return '被中断'
+	// spawn 失败（ENOENT/EACCES）跟"脚本跑了但输出不对"是两件事，别混成
+	// 「JSON 解析失败：spawn ... ENOENT」这种让人以为解析器有问题的说法。
+	if (stderr.includes('ENOENT')) return 'python 起不来（找不到这个解释器）'
+	if (stderr.includes('EACCES')) return 'python 起不来（没有执行权限）'
 	return stderr === '' ? fallback : `${fallback}：${stderr}`
 }
 

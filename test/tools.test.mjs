@@ -222,7 +222,9 @@ test('ratchet_checkpoint：校验器跑不起来时如实写跳过', async () =>
 	await env.tool('ratchet_checkpoint').execute({ stage: '第一段', summary: '做完了' }, env.exec)
 	const detail = env.panels[0].questions[0].detail
 	assert.match(detail, /#### 文档校验/)
-	assert.match(detail, /术语表 –/)
+	assert.match(detail, /都没跑/)
+	// 一排破折号等于什么都没说，跳过必须带原因。
+	assert.doesNotMatch(detail, /术语表 –/)
 })
 
 test('ratchet_checkpoint：正文带上「定下的」，空白条目被过滤', async () => {

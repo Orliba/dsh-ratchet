@@ -643,6 +643,10 @@ function createCheckpointTool(ctx, settings) {
 					name: result.name,
 					verdict: result.skipped === true ? 'SKIP' : (result.verdict ?? '?'),
 					...(result.skipped === true ? { skipped: true } : {}),
+					// 跳过要带上原因：卡片上摆一排破折号等于什么都没说。
+					...(typeof result.reason === 'string' && result.reason.trim() !== ''
+						? { reason: result.reason.trim() }
+						: {}),
 				})),
 				...(nextText === '' ? {} : { next: nextText }),
 			}

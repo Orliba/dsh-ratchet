@@ -111,12 +111,14 @@ window.__ModuleLoader__.load({
 	line-height: 16px;
 	color: var(--dsw-alias-label-secondary);
 }
-.drt-check { display: inline-flex; align-items: center; gap: 4px; }
-.drt-check svg { flex: none; }
+.drt-check { display: inline-flex; align-items: baseline; gap: 4px; }
+.drt-check svg { flex: none; align-self: center; }
 .drt-check[data-verdict='PASS'] { color: var(--dsw-alias-state-success-primary); }
 .drt-check[data-verdict='WARN'] { color: var(--dsw-alias-state-warn-label); }
 .drt-check[data-verdict='FAIL'] { color: var(--dsw-alias-state-error-primary); }
 .drt-check[data-verdict='SKIP'] { color: var(--dsw-alias-label-dimmed); }
+/* 全跳过整条换成一句实话，比一排破折号长，得允许换行。 */
+.drt-checks[data-all-skipped='yes'] .drt-check { line-height: 17px; white-space: normal; }
 
 .drt-files {
 	display: flex;
@@ -410,6 +412,11 @@ window.__ModuleLoader__.load({
 			const title = isCheckpoint ? `第 ${meta.stageIndex ?? 1} 段 · ${meta.stage ?? ''}` : topicLabel
 			const more = files.length > 2 || (isCheckpoint && typeof meta.next === 'string' && meta.next !== '')
 
+			// 全跳过时不摆一排破折号 —— 三个 `–` 读起来像零件坏了，其实只是这个目录
+			// 还没建 CONTEXT.md / docs/adr/。压成一句实话，把原因说出来。
+			const allSkipped = checks.length > 0 && checks.every((each) => each.verdict === 'SKIP')
+			const skipReasons = [...new Set(checks.map((each) => (typeof each.reason === 'string' && each.reason !== '' ? each.reason : '不适用')))]
+
 			return h(
 				'div',
 				{ className: 'drt-card' },
@@ -424,18 +431,36 @@ window.__ModuleLoader__.load({
 
 				checks.length === 0
 					? null
-					: h(
-							'div',
-							{ className: 'drt-checks' },
-							...checks.map((each) =>
+					: allSkipped
+						? h(
+								'div',
+								{ className: 'drt-checks', 'data-all-skipped': 'yes' },
 								h(
 									'span',
-									{ className: 'drt-check', 'data-verdict': each.verdict, key: each.name },
-									glyph(each.verdict),
-									CHECK_SHORT[each.name] ?? each.name,
+									{ className: 'drt-check', 'data-verdict': 'SKIP', title: skipReasons.join('\n') },
+									glyph('SKIP'),
+									skipReasons.length === 1
+										? `没跑校验 —— ${skipReasons[0]}`
+										: `${checks.length} 个校验器都没跑 —— 这个目录还没有它们要查的东西`,
+								),
+							)
+						: h(
+								'div',
+								{ className: 'drt-checks' },
+								...checks.map((each) =>
+									h(
+										'span',
+										{
+											className: 'drt-check',
+											'data-verdict': each.verdict,
+											key: each.name,
+											title: typeof each.reason === 'string' && each.reason !== '' ? each.reason : undefined,
+										},
+										glyph(each.verdict),
+										CHECK_SHORT[each.name] ?? each.name,
+									),
 								),
 							),
-						),
 
 				files.length === 0
 					? null

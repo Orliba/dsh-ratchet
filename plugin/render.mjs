@@ -106,16 +106,46 @@ export function renderDecisions(decisions) {
  *
  * 用 `####` 而不是粗体段落：面板上四个分区（产出 / 定下的 / 文档校验 / 提示）
  * 都靠标题撑出层级，粗体只有 600 字重，在 13px 正文里几乎看不出来。
- * @param {{results: Array<{name:string, verdict?:string, skipped?:boolean}>}} outcome
+ *
+ * 全跳过时**不摆一排破折号**：`– – –` 读起来像零件坏了，其实只是这个目录还没建
+ * CONTEXT.md / docs/adr/。改成一句实话 + 各自的原因，信息量更大。
+ *
+ * @param {{results: Array<{name:string, verdict?:string, skipped?:boolean, reason?:string}>}} outcome
  */
 export function renderCheckBadges(outcome) {
 	const results = Array.isArray(outcome?.results) ? outcome.results : []
 	if (results.length === 0) return '#### 文档校验\n\n没有可跑的校验器'
+
+	const skipped = results.filter((result) => result.skipped === true || result.verdict === 'SKIP')
+	if (skipped.length === results.length) {
+		const reasons = dedupeReasons(results.map(skipReason))
+		if (reasons.length === 1) return `#### 文档校验\n\n${results.length} 个校验器都没跑：${reasons[0]}`
+		return `#### 文档校验\n\n${results.length} 个校验器都没跑 —— 这个目录还没有它们要查的东西：\n\n${reasons
+			.map((reason) => `- ${reason}`)
+			.join('\n')}`
+	}
+
 	const parts = results.map((result) => {
 		const mark = result.skipped === true ? VERDICT_MARK.SKIP : (VERDICT_MARK[result.verdict] ?? '?')
 		return `${shortCheckName(result.name)} ${mark}`
 	})
 	return `#### 文档校验\n\n${parts.join('　')}`
+}
+
+/** 一条跳过原因，缺了就说不适用，不留空。 */
+function skipReason(result) {
+	return typeof result.reason === 'string' && result.reason.trim() !== '' ? result.reason.trim() : '不适用'
+}
+
+/**
+ * 去重跳过原因，顺便吃掉"没有 CONTEXT.md"是"没有 CONTEXT.md（这段还没建术语表）"
+ * 前缀的重复 —— 同一个缺失说两遍读起来像两件事。
+ */
+function dedupeReasons(reasons) {
+	const unique = [...new Set(reasons)]
+	return unique.filter(
+		(reason) => !unique.some((other) => other !== reason && other.startsWith(reason) && other.length > reason.length),
+	)
 }
 
 /**

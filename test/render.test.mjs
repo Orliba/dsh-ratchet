@@ -117,10 +117,46 @@ test('校验徽章把三个名字压成一行', () => {
 	assert.match(text, /一致性 !/)
 })
 
-test('校验徽章对全跳过给破折号，不是问号', () => {
-	const text = renderCheckBadges({ results: [{ name: 'CONTEXT.md 术语表', skipped: true, reason: '没有文件' }] })
-	assert.match(text, /术语表 –/)
+test('全部跳过时不摆一排破折号，而是说出为什么没跑', () => {
+	const text = renderCheckBadges({
+		results: [{ name: 'CONTEXT.md 术语表', skipped: true, reason: '没有 CONTEXT.md（这段还没建术语表）' }],
+	})
+	assert.doesNotMatch(text, /–/, '一排破折号读起来像零件坏了')
 	assert.doesNotMatch(text, /\?/)
+	assert.match(text, /都没跑/)
+	assert.match(text, /没有 CONTEXT\.md/)
+})
+
+test('全部跳过且原因各不相同时逐条列出来，不糊成一句', () => {
+	const text = renderCheckBadges({
+		results: [
+			{ name: 'CONTEXT.md 术语表', skipped: true, reason: '没有 CONTEXT.md' },
+			{ name: 'ADR 目录', skipped: true, reason: '没有 docs/adr/' },
+		],
+	})
+	assert.match(text, /2 个校验器都没跑/)
+	assert.match(text, /^- 没有 CONTEXT\.md$/m)
+	assert.match(text, /^- 没有 docs\/adr\/$/m)
+})
+
+test('全部跳过但原因相同时只写一遍，别重复三次', () => {
+	const reason = '找不到可用的 python 解释器'
+	const text = renderCheckBadges({
+		results: ['CONTEXT.md 术语表', 'ADR 目录', '术语↔代码一致性'].map((name) => ({ name, skipped: true, reason })),
+	})
+	assert.equal(text.split(reason).length - 1, 1)
+	assert.match(text, /3 个校验器都没跑/)
+})
+
+test('部分跳过时仍然用徽章，跳过的那个带破折号', () => {
+	const text = renderCheckBadges({
+		results: [
+			{ name: 'CONTEXT.md 术语表', verdict: 'PASS' },
+			{ name: 'ADR 目录', skipped: true, reason: '没有 docs/adr/' },
+		],
+	})
+	assert.match(text, /术语表 ✓/)
+	assert.match(text, /ADR –/)
 })
 
 test('校验徽章在没有任何校验器时给一句实话', () => {

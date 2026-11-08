@@ -511,3 +511,63 @@ test('卡片在缺少 block.meta 时也渲染得出来（老会话 / 降级路�
 	assert.equal(tree.type, 'div')
 	assert.match(JSON.stringify(tree), /ratchet_start/)
 })
+
+test('卡片：全跳过时不摆一排破折号，改成一句带原因的话', async () => {
+	const loaded = loadClient()
+	await loaded.exports.apply(loaded.ctx)
+	const [handle] = loaded.slots.registered
+	const tree = handle.component({
+		toolName: 'ratchet_checkpoint',
+		block: {
+			state: 'ok',
+			meta: {
+				ratchet: {
+					kind: 'checkpoint',
+					stage: 's',
+					stageIndex: 1,
+					action: 'continue',
+					checks: [
+						{ name: 'CONTEXT.md 术语表', verdict: 'SKIP', skipped: true, reason: '没有 CONTEXT.md' },
+						{ name: 'ADR 目录', verdict: 'SKIP', skipped: true, reason: '没有 docs/adr/' },
+					],
+					artifacts: [],
+				},
+			},
+		},
+	})
+	const text = JSON.stringify(tree)
+	assert.match(text, /个校验器都没跑/)
+	assert.match(text, /没有 CONTEXT\.md/)
+	// 原因各不相同时原文太长，收成一句总述，细节放 title 里。
+	assert.doesNotMatch(text, /术语表 –/)
+})
+
+test('卡片：只有部分跳过时仍然一个个列徽章', async () => {
+	const loaded = loadClient()
+	await loaded.exports.apply(loaded.ctx)
+	const [handle] = loaded.slots.registered
+	const tree = handle.component({
+		toolName: 'ratchet_checkpoint',
+		block: {
+			state: 'ok',
+			meta: {
+				ratchet: {
+					kind: 'checkpoint',
+					stage: 's',
+					stageIndex: 1,
+					checks: [
+						{ name: 'CONTEXT.md 术语表', verdict: 'PASS' },
+						{ name: 'ADR 目录', verdict: 'SKIP', skipped: true, reason: '没有 docs/adr/' },
+					],
+					artifacts: [],
+				},
+			},
+		},
+	})
+	const text = JSON.stringify(tree)
+	assert.match(text, /术语表/)
+	assert.match(text, /ADR/)
+	assert.match(text, /PASS/)
+	assert.match(text, /SKIP/)
+	assert.doesNotMatch(text, /个校验器都没跑/)
+})
