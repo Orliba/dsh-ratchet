@@ -28,12 +28,12 @@
 
 工具定义手写成 raw JSON Schema，所以没有 zod、没有 `dsh-tools` 依赖。唯一的包依赖是 `@deepseek-ai/schemastery`（声明在 `peerDependencies`，用宿主的副本）——因为设置页的 `Config` 必须是一个能被宿主 `describe()` 认出来的 schema。`peerDependencies` 而不是 `dependencies` 是硬要求：宿主对被 link 进来的插件只按 `peerDependencies` 放行 `@deepseek-ai/*` 的解析。
 
-在 profile 的 `package.json` 里挂上：
+在 profile 的 `package.json` 里挂上。从 npm 装就写版本号，本地开发就写 `link:`：
 
 ```json
 {
   "dependencies": {
-    "dsh-ratchet": "link:H:/Deepseekstudio/workspace2/dsh-ratchet"
+    "dsh-ratchet": "^0.2.0"
   },
   "dsh": {
     "profile": {
@@ -43,7 +43,9 @@
 }
 ```
 
-然后在该 profile 目录跑 `pnpm install` 生成 junction，重启 DSH。
+本地路径开发时把上面那行换成 `"dsh-ratchet": "link:H:/Deepseekstudio/workspace2/dsh-ratchet"`。
+
+然后在该 profile 目录跑 `pnpm install`（用 `link:` 时它会生成 junction；从 npm 装时就是普通解包），重启 DSH。
 
 配置**不用手改文件**：装好之后进「设置 → 插件 → dsh-ratchet → 配置」，六个值都能在那儿改，保存即生效（不重启）。底下的 `cordis.patch.yml` 只是初始值。
 
