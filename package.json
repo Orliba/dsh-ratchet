@@ -16,8 +16,17 @@
   "files": [
     "plugin",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Orliba/dsh-ratchet.git"
+  },
+  "homepage": "https://github.com/Orliba/dsh-ratchet#readme",
+  "bugs": {
+    "url": "https://github.com/Orliba/dsh-ratchet/issues"
+  },
   "keywords": [
     "dsh",
     "dsh-plugin",
