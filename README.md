@@ -187,6 +187,16 @@ npm test        # node --test，118 个用例
 
 `plugin/vendor/` 里是从 `H:\Deepseekstudio-data\skills\grill-with-docs\scripts` 复制的三个 stdlib-only Python 校验器（MIT，Matt Pocock 上游）。源目录只读，改动请改 vendor 副本。
 
+### 对上游的三处本地增强
+
+直接照搬会让「术语↔代码一致性」这项在 DSH 项目里永远不说话、或者开口全是废话，所以 vendor 副本里改了三处，每处都在代码里标了 `[ratchet 本地增强]`：
+
+1. **`DEFAULT_EXTENSIONS` 加 `.mjs` / `.cjs`。** 上游只认 `.py/.ts/.js/...`，而 DSH 插件主体全是 `.mjs` —— 扫出 0 个文件就会被判定"没有可扫的源文件"然后跳过，这项校验等于没装。
+2. **`count_term_in_text` 允许一个可选复数后缀**（`\bTerm(?:s|es)?\b`）。术语表里写单数 `Artifact`、代码里用复数 `artifacts` 是常态，上游会把它判成"死术语"。实测这一条把 `Artifact` 从 0 修正到 14。
+3. **`--exclude` 参数 + 跳过全大写词。** 前者的用途是排掉 `plugin/vendor/`（那里全是上游样例数据 `Order`/`Customer`/`Product`，会冒充本项目的未定义领域词）；后者是因为 `COPY`/`DEFAULTS`/`SKIP`/`ADR` 这类常量名和缩略语被当成"该定义的领域词"报出来时，二十五条噪声里有用的只剩几条，真信号就被淹了。
+
+这三处都是增量，默认值保持上游行为不变；`test/validators.test.mjs` 里各有一条回归测试钉着，免得日后从上游同步时被覆盖掉。
+
 ## 文件
 
 ```

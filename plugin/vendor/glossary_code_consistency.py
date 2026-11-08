@@ -42,6 +42,10 @@ DEFAULT_EXTENSIONS = {
     ".tsx",
     ".js",
     ".jsx",
+    # [ratchet 本地增强] 上游没有这两个。DSH 插件生态全是 .mjs，不认它就会
+    # 扫出 0 个源文件，把这个校验器永远变成"跳过"。
+    ".mjs",
+    ".cjs",
     ".go",
     ".java",
     ".kt",
@@ -148,7 +152,10 @@ def is_test_file(path: Path) -> bool:
 
 
 def count_term_in_text(text: str, term: str) -> int:
-    pattern = re.compile(rf"\b{re.escape(term)}\b", re.IGNORECASE)
+    # [ratchet 本地增强] 上游用 \bTerm\b，定义了 "Artifact" 而代码里只有
+    # "artifacts" 时会被判成死术语 —— 术语表里写单数、代码里用复数是常态，
+    # 这条误报会把真信号淹掉。允许一个可选的复数后缀。
+    pattern = re.compile(rf"\b{re.escape(term)}(?:s|es)?\b", re.IGNORECASE)
     return len(pattern.findall(text))
 
 
@@ -197,6 +204,11 @@ def analyze(
         if noun.lower() in glossary_term_set_lower:
             continue
         if noun in GENERIC_WORDS:
+            continue
+        # [ratchet 本地增强] 全大写（COPY / DEFAULTS / SKIP / ADR …）是常量名和缩略语，
+        # 不是"该定义的领域词"。上游会把这些全报出来，二十条噪声里有用的只剩几条，
+        # 真信号被淹掉，于是这一项永远是个红点、没人再看。
+        if noun.isupper():
             continue
         code_only.append((noun, count))
 
@@ -260,6 +272,14 @@ def main(argv: List[str]) -> int:
         default=3,
         help="Minimum occurrences for a code-only proper noun to surface (default: 3)",
     )
+    # [ratchet 本地增强] 上游没有这个参数。DSH 插件生态里主体是 .mjs/.cjs，
+    # 不排除 vendor 目录又会让复制来的样例数据（Order/Customer/Product）冒充
+    # 本项目的"未定义领域词"。默认值保持上游行为不变。
+    parser.add_argument(
+        "--exclude",
+        default=None,
+        help="Comma-separated extra directory names to skip on top of the defaults",
+    )
     parser.add_argument("--sample", action="store_true", help="Run on the embedded sample data")
     parser.add_argument("--output", choices=["human", "json"], default="human")
     args = parser.parse_args(argv)
@@ -279,8 +299,12 @@ def main(argv: List[str]) -> int:
             exts = {e.strip() if e.strip().startswith(".") else "." + e.strip() for e in args.extensions.split(",")}
         else:
             exts = DEFAULT_EXTENSIONS
+        # [ratchet 本地增强] 额外排除目录，默认空集合，上游行为不变。
+        exclude_dirs = set(DEFAULT_EXCLUDE_DIRS)
+        if args.exclude:
+            exclude_dirs |= {part.strip() for part in args.exclude.split(",") if part.strip()}
         files: List[Tuple[str, str]] = []
-        for p in walk_codebase(code_root, exts, DEFAULT_EXCLUDE_DIRS):
+        for p in walk_codebase(code_root, exts, exclude_dirs):
             try:
                 files.append((str(p), p.read_text(encoding="utf-8", errors="ignore")))
             except (OSError, UnicodeDecodeError):

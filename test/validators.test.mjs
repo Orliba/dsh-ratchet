@@ -155,3 +155,64 @@ test('一致性校验自己能合成 verdict，不会掉成问号', async (t) =>
 	assert.equal(consistency.verdict, 'WARN')
 	assert.ok(consistency.findings.some((line) => line.includes('Ghost')), '该报出 Ghost 是死术语')
 })
+
+test('.mjs 也是被扫的源文件（不然插件项目永远扫出零个文件）', async (t) => {
+	const python = resolvePython('')
+	if (python === null) {
+		t.skip('这台机器没有可用的 python')
+		return
+	}
+	const dir = makeProject()
+	// 只有 .mjs，没有 .py —— 上游默认扩展名不认 .mjs，会数出 0 个文件然后跳过。
+	writeFileSync(join(dir, 'src', 'only.mjs'), 'export const Sample = 1\n')
+	const outcome = await runAllChecks({ cwd: dir, timeoutMs: 15000 })
+	const consistency = outcome.results.find((entry) => entry.name.includes('一致性'))
+	assert.ok(consistency)
+	assert.equal(consistency.skipped, false, `只放 .mjs 也不该被跳过：${consistency.reason ?? ''}`)
+	assert.ok(!consistency.findings.some((line) => line.includes('Sample')), '只在 .mjs 里出现的术语不算死术语')
+})
+
+test('术语表写单数、代码里用复数不算死术语', async (t) => {
+	const python = resolvePython('')
+	if (python === null) {
+		t.skip('这台机器没有可用的 python')
+		return
+	}
+	const dir = makeProject()
+	writeFileSync(
+		join(dir, 'CONTEXT.md'),
+		['# Context', '', '## Language', '', '**Sample**: 一条采样记录。', '', '_Avoid_: record', ''].join('\n'),
+	)
+	// 代码里只有复数 samples，术语表里是单数 Sample。
+	writeFileSync(join(dir, 'src', 'reader.mjs'), 'export const samples = [1, 2, 3]\n')
+	const outcome = await runAllChecks({ cwd: dir, timeoutMs: 15000 })
+	const consistency = outcome.results.find((entry) => entry.name.includes('一致性'))
+	assert.ok(consistency)
+	assert.equal(consistency.skipped, false, `不该被跳过：${consistency.reason ?? ''}`)
+	assert.ok(
+		!consistency.findings.some((line) => line.includes('死术语') || line.includes('一次都没用到')),
+		`复数用法不该被判成死术语，实际报出：${consistency.findings.join(' | ')}`,
+	)
+})
+
+test('全大写常量名不当成"该定义的领域词"报出来', async (t) => {
+	const python = resolvePython('')
+	if (python === null) {
+		t.skip('这台机器没有可用的 python')
+		return
+	}
+	const dir = makeProject()
+	// 常量名出现十次，缩略语出现十次 —— 都是噪声，不该挤掉真正的 code-only 提示。
+	writeFileSync(
+		join(dir, 'src', 'consts.mjs'),
+		['export const SAMPLES_PER_ROW = 10', 'const SkipPolicy = 1 // SKIP SKIP SKIP SKIP SKIP', 'const ADR = 1 // ADR ADR ADR ADR ADR', ''].join(
+			'\n',
+		),
+	)
+	const outcome = await runAllChecks({ cwd: dir, timeoutMs: 15000 })
+	const consistency = outcome.results.find((entry) => entry.name.includes('一致性'))
+	assert.ok(consistency)
+	assert.equal(consistency.skipped, false, `不该被跳过：${consistency.reason ?? ''}`)
+	const noisy = consistency.findings.filter((line) => /code-only.*「(SKIP|ADR|SAMPLES_PER_ROW)」/.test(line))
+	assert.deepEqual(noisy, [], `全大写不该被当成领域词：${noisy.join(' | ')}`)
+})

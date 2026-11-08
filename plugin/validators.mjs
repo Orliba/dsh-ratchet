@@ -209,7 +209,18 @@ async function checkGlossary(ctx) {
 	const run = await runScript(
 		ctx.python,
 		SCRIPTS.glossary,
-		['--context', contextPath, '--code', codeRoot, '--output', 'json'],
+		[
+			'--context',
+			contextPath,
+			'--code',
+			codeRoot,
+			// vendor 里是复制来的上游样例数据（Order/Customer/Product），不排掉会冒充
+			// 本项目的"未定义领域词"，把真正的信号淹掉。
+			'--exclude',
+			'vendor',
+			'--output',
+			'json',
+		],
 		ctx.cwd,
 		ctx.timeoutMs,
 		ctx.signal,
