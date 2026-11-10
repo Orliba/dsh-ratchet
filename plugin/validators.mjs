@@ -1,14 +1,17 @@
-// 三个 ratchet 文档校验器的 host 侧封装。
+// Host-side wrapper around the three document validators.
 //
-// 这些脚本原本是 grill-with-docs skill 里"靠模型自觉去跑"的 Python 工具
-// （stdlib-only，见 plugin/vendor/）。插件的价值就是把"自觉"变成"每次 checkpoint 必跑"：
-// 模型不跑，就没有校验结果进面板，用户也就不需要相信模型自称的"我检查过了"。
+// These scripts were Python tools in the grill-with-docs skill that "the model was
+// trusted to run" (stdlib-only, see plugin/vendor/). The plugin's value is turning
+// "trusted to" into "runs on every checkpoint": if the model skips them, no verdict
+// reaches the panel, and the user never has to believe a self-reported "I checked".
 //
-// 设计约束：
-//   1. 任何一步失败都不许抛出去把工具调用打挂 —— 校验是附加信息，不是前置条件。
-//      缺 python、缺文件、超时、JSON 解析失败，一律降级成 { skipped, reason }。
-//   2. 不 import 任何 @deepseek-ai/* 包，只用 node 内建，保证插件可零依赖加载。
-//   3. 子进程必须带 timeout，并且被父 signal 打断时一起杀掉。
+// Design constraints:
+//   1. No step may throw and take the tool call down with it — validation is extra
+//      information, not a precondition. Missing python, missing file, timeout, bad
+//      JSON: all degrade to { skipped, reason }.
+//   2. No @deepseek-ai/* imports, only Node built-ins, so the plugin loads with zero
+//      runtime dependencies.
+//   3. Subprocesses must carry a timeout and be killed when the parent signal aborts.
 
 import { spawn, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, statSync } from 'node:fs'
@@ -24,15 +27,15 @@ export const SCRIPTS = {
 	glossary: join(VENDOR_DIR, 'glossary_code_consistency.py'),
 }
 
-/** 候选代码根目录，用于 glossary↔code 一致性检查。按顺序取第一个存在的。 */
+/** Candidate code roots for the glossary↔code consistency check. First one that exists wins. */
 const CODE_ROOTS = ['src', 'lib', 'app', 'plugin', 'pkg', 'scripts']
 
 let cachedPython
 
 /**
- * 探测一个可用的 Python 解释器。
- * 结果缓存在模块级变量里：一次会话只付一次探测成本。
- * @param {string} [configured] - 配置里的显式路径，优先级最高。
+ * Probe for a usable Python interpreter.
+ * The result is cached at module level: one probe per session, not per checkpoint.
+ * @param {string} [configured] - explicit path from config, highest priority.
  * @returns {{ command: string, prefix: string[], label: string } | null}
  */
 export function resolvePython(configured) {
@@ -45,7 +48,8 @@ export function resolvePython(configured) {
 		{ command: 'python3', prefix: [], label: 'python3' },
 		{ command: 'py', prefix: ['-3'], label: 'py -3' },
 	]
-	// DSH 自带运行时里有一份 python，作者机器上是确定可用的；别的机器上不存在就跳过。
+	// The DSH bundled runtime ships a python that is known good on the author's
+	// machine; on other machines it simply is not there and gets skipped.
 	const bundled = join(process.env.DSH_INSTALL_ROOT ?? 'H:\\Deepseekstudio', 'resources', 'runtime', 'primary-runtime', 'dependencies', 'python', 'python.exe')
 	if (existsSync(bundled)) candidates.push({ command: bundled, prefix: [], label: 'dsh-bundled' })
 
@@ -61,7 +65,7 @@ export function resolvePython(configured) {
 				return cachedPython
 			}
 		} catch {
-			// 换下一个候选。
+			// Try the next candidate.
 		}
 	}
 	cachedPython = null
@@ -69,7 +73,7 @@ export function resolvePython(configured) {
 }
 
 /**
- * 跑一个 vendor 脚本并解析它的 `--output json` 输出。
+ * Run one vendor script and parse its `--output json` payload.
  * @returns {Promise<{ ok: boolean, code: number | null, stdout: string, stderr: string, timedOut: boolean }>}
  */
 function runScript(python, script, args, cwd, timeoutMs, signal) {
@@ -97,14 +101,14 @@ function runScript(python, script, args, cwd, timeoutMs, signal) {
 			try {
 				child.kill('SIGKILL')
 			} catch {
-				// 子进程可能已经退出。
+				// The child may already have exited.
 			}
 		}, timeoutMs)
 		const onAbort = () => {
 			try {
 				child.kill('SIGKILL')
 			} catch {
-				// 同上。
+				// Same as above.
 			}
 		}
 		signal?.addEventListener?.('abort', onAbort, { once: true })
@@ -129,7 +133,7 @@ function runScript(python, script, args, cwd, timeoutMs, signal) {
 	})
 }
 
-/** 从脚本 stdout 里抠出 JSON 对象（脚本只印 JSON，但防御性取最后一个 '{' 开头）。 */
+/** Dig the JSON object out of stdout (scripts print JSON only, but tolerate leading noise). */
 function parseJson(stdout) {
 	const text = (stdout ?? '').trim()
 	if (text === '') return undefined
@@ -147,7 +151,7 @@ function parseJson(stdout) {
 	}
 }
 
-/** 把一条 finding 压成一行。 */
+/** Collapse one finding into a single line. */
 function formatFinding(finding) {
 	const level = String(finding?.level ?? '?')
 	const rule = String(finding?.rule ?? '?')
@@ -158,7 +162,7 @@ function formatFinding(finding) {
 }
 
 /**
- * 一个校验器的标准返回形状。
+ * The standard shape every validator returns.
  * @typedef {object} CheckResult
  * @property {string} name
  * @property {boolean} skipped
@@ -168,7 +172,7 @@ function formatFinding(finding) {
  * @property {string[]} [findings]
  */
 
-/** 检查 CONTEXT.md 术语表格式。 */
+/** Check the CONTEXT.md glossary format. */
 async function checkContext(ctx) {
 	const path = join(ctx.cwd, 'CONTEXT.md')
 	if (!existsSync(path)) return { name: 'CONTEXT.md 术语表', skipped: true, reason: '没有 CONTEXT.md（这段还没建术语表）' }
@@ -184,7 +188,7 @@ async function checkContext(ctx) {
 	}
 }
 
-/** 检查 docs/adr/ 的编号与结构。 */
+/** Check the numbering and structure under docs/adr/. */
 async function checkAdr(ctx) {
 	const dir = join(ctx.cwd, 'docs', 'adr')
 	if (!existsSync(dir)) return { name: 'ADR 目录', skipped: true, reason: '没有 docs/adr/（这段不需要决策记录）' }
@@ -200,7 +204,7 @@ async function checkAdr(ctx) {
 	}
 }
 
-/** 检查术语表与代码用词是否一致（dead glossary / code-only 专有名词）。 */
+/** Check whether the glossary and the code use the same words (dead glossary / code-only nouns). */
 async function checkGlossary(ctx) {
 	const contextPath = join(ctx.cwd, 'CONTEXT.md')
 	if (!existsSync(contextPath)) return { name: '术语↔代码一致性', skipped: true, reason: '没有 CONTEXT.md' }
@@ -214,8 +218,9 @@ async function checkGlossary(ctx) {
 			contextPath,
 			'--code',
 			codeRoot,
-			// vendor 里是复制来的上游样例数据（Order/Customer/Product），不排掉会冒充
-			// 本项目的"未定义领域词"，把真正的信号淹掉。
+			// The vendor directory holds copied upstream sample data (Order/Customer/
+			// Product); leaving it in makes those pose as this project's undefined domain
+			// nouns and drowns the real signal.
 			'--exclude',
 			'vendor',
 			'--output',
@@ -230,7 +235,8 @@ async function checkGlossary(ctx) {
 	const scanned = Number(parsed.files_scanned ?? 0)
 	if (scanned === 0) return { name: '术语↔代码一致性', skipped: true, reason: '代码目录里没有可扫的源文件' }
 
-	// 这个脚本不输出 verdict/findings（前两个脚本才输出），得自己从四个字段合成。
+	// This script emits no verdict/findings (only the first two do), so the verdict is
+	// synthesized from its four raw fields.
 	const dead = Array.isArray(parsed.dead_glossary_terms) ? parsed.dead_glossary_terms : []
 	const codeOnly = Array.isArray(parsed.code_only_proper_nouns) ? parsed.code_only_proper_nouns : []
 	const findings = []
@@ -249,24 +255,25 @@ async function checkGlossary(ctx) {
 	}
 }
 
-/** 把失败态收成一句人话。 */
+/** Reduce a failure state to one plain sentence. */
 function collapse(run, fallback) {
 	if (run.timedOut) return '超时'
 	const stderr = (run.stderr ?? '').trim().split('\n')[0]
 	if (stderr === 'aborted') return '被中断'
-	// spawn 失败（ENOENT/EACCES）跟"脚本跑了但输出不对"是两件事，别混成
-	// 「JSON 解析失败：spawn ... ENOENT」这种让人以为解析器有问题的说法。
+	// A failed spawn (ENOENT/EACCES) and "the script ran but printed nonsense" are two
+	// different things. Merging them produces "JSON 解析失败：spawn ... ENOENT", which
+	// reads as a broken parser rather than a broken interpreter path.
 	if (stderr.includes('ENOENT')) return 'python 起不来（找不到这个解释器）'
 	if (stderr.includes('EACCES')) return 'python 起不来（没有执行权限）'
 	return stderr === '' ? fallback : `${fallback}：${stderr}`
 }
 
 /**
- * 跑全部三个校验器。
+ * Run all three validators.
  * @param {object} options
- * @param {string} options.cwd - 项目根目录（绝对路径）。
- * @param {string} [options.pythonPath] - 显式 python 路径。
- * @param {number} [options.timeoutMs] - 单个脚本超时。
+ * @param {string} options.cwd - project root (absolute path).
+ * @param {string} [options.pythonPath] - explicit python path.
+ * @param {number} [options.timeoutMs] - per-script timeout.
  * @param {AbortSignal} [options.signal]
  * @returns {Promise<{ python: string | null, results: CheckResult[], allSkipped: boolean }>}
  */
@@ -302,9 +309,13 @@ export async function runAllChecks(options) {
 }
 
 /**
- * 把校验结果渲染成面板正文里的一段。
+ * Render the validators into one block of panel body text.
+ *
+ * Kept for callers that want a plain list; the checkpoint panel now prefers
+ * render.mjs's badge row. Still covered by tests, so it must not rot.
+ *
  * @param {{ python: string | null, results: CheckResult[] }} outcome
- * @param {number} [maxFindings] - 每个校验器最多列几条。
+ * @param {number} [maxFindings] - max findings listed per validator.
  * @returns {string}
  */
 export function renderChecks(outcome, maxFindings = 4) {
@@ -328,7 +339,7 @@ export function renderChecks(outcome, maxFindings = 4) {
 	return lines.join('\n')
 }
 
-/** 读一个文件的行数与字节数，给面板贴"真产出"。 */
+/** Read a file's line and byte counts, so the panel can show something real. */
 export function describeFile(absolutePath) {
 	try {
 		const info = statSync(absolutePath)
@@ -347,7 +358,7 @@ export function describeFile(absolutePath) {
 	}
 }
 
-/** 解析 artifacts 里的一条相对路径。 */
+/** Resolve one relative artifact path against the working directory. */
 export function absoluteFrom(cwd, entry) {
 	return resolve(cwd, entry)
 }

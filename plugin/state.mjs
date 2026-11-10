@@ -1,18 +1,20 @@
-// 会话级状态：一条投影 + 一组合规的 plugin record 写入口。
+// Session-scoped state: one projection plus a compliant way to write plugin records.
 //
-// 为什么不用模块级 Map：resume / fork 之后 Map 是空的，模型会以为"还在第三段"，
-// 用户看到的面板编号却从零开始 —— 这种错位正是本插件要消灭的东西。
-// 所以状态必须落进 event log，靠 projection 折叠回来。
+// Why not a module-level Map: after resume or fork the Map is empty, so the model
+// believes it is still on stage three while the panel the user sees counts from
+// zero again. That mismatch is exactly what this plugin exists to remove. So state
+// has to land in the event log and be folded back by a projection.
 //
-// record type 必须匹配 `^plugin:[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*$`，
-// 并且只能走 appendPluginRecord —— Session.append() 会因未知 type 被 validate 拒掉。
+// The record type must match `^plugin:[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*$`
+// and may only be written through appendPluginRecord — Session.append() rejects an
+// unknown type in validation.
 
 export const RECORD_TYPE = 'plugin:dsh-ratchet/state'
 export const PROJECTION_KEY = 'ratchet'
 
 const MAX_STAGES = 12
 
-/** @returns {object} 空状态。 */
+/** @returns {object} The empty state. */
 export function emptyState() {
 	return {
 		active: false,
@@ -26,7 +28,7 @@ export function emptyState() {
 	}
 }
 
-/** 把任意输入收成一个合法状态（投影与工具都走这里，防止半截数据进 log）。 */
+/** Coerce anything into a legal state (both the projection and the tools go through this). */
 export function normalizeState(value) {
 	const source = typeof value === 'object' && value !== null ? value : {}
 	const stages = Array.isArray(source.stages) ? source.stages : []
@@ -51,9 +53,10 @@ export function normalizeState(value) {
 }
 
 /**
- * 投影定义。apply 会被喂**每一个**已提交事件（包括 ignorable 的 plugin record），
- * 所以这里只挑自己的 record，其余原样返回同一个引用 —— 引用不变投影层就认为没变，
- * 不会触发多余的 view 重算。
+ * The projection definition. `apply` is handed *every* committed event (including
+ * ignorable plugin records), so it picks out its own record and returns the same
+ * reference for everything else — an unchanged reference means the projection layer
+ * sees no change and skips a pointless view recomputation.
  */
 export const ratchetProjection = {
 	key: PROJECTION_KEY,
@@ -106,7 +109,7 @@ export const ratchetProjection = {
 		return state
 	},
 	wire: {
-		// 客户端可见的那一份：只暴露"要不要显示、第几段、什么话题"，不带全量阶段史。
+		// What the client sees: just "is it active, which stage, what topic" — no stage history.
 		viewSchema: {
 			parse: (value) => value,
 		},
@@ -121,9 +124,9 @@ export const ratchetProjection = {
 let appendRecord
 
 /**
- * 懒加载 `appendPluginRecord`。
- * 用动态 import 而不是静态 import：万一宿主包解析失败，插件整体仍然能装配，
- * 只是状态退回内存（工具内保留一份 mirror），不至于整个 /ratchet 都不可用。
+ * Lazy-load `appendPluginRecord`. A dynamic import rather than a static one: if the
+ * host package fails to resolve, the plugin still assembles, and only state falls
+ * back to memory (each tool keeps a mirror) instead of `/ratchet` being unusable.
  * @returns {Promise<((session: any, type: string, data: any) => number) | null>}
  */
 async function loadAppendRecord() {
@@ -138,11 +141,12 @@ async function loadAppendRecord() {
 	return appendRecord
 }
 
-/** 内存镜像：appendPluginRecord 不可用时的兜底。key = session 对象。 */
+/** In-memory mirror: the fallback when appendPluginRecord is unavailable. Key = session. */
 const mirror = new WeakMap()
 
 /**
- * 读当前状态。优先走投影（resume/fork 后依然准确），投影缺席时退回镜像。
+ * Read the current state. The projection wins (it stays accurate across
+ * resume/fork); the mirror answers when the projection is absent.
  * @returns {object}
  */
 export function readState(ctx, session) {
@@ -151,17 +155,17 @@ export function readState(ctx, session) {
 		const state = projections?.stateOf?.(session, PROJECTION_KEY)
 		if (state !== undefined) return normalizeState(state)
 	} catch {
-		// 投影服务不可用，走镜像。
+		// Projection service unavailable — fall through to the mirror.
 	}
 	return normalizeState(mirror.get(session))
 }
 
 /**
- * 写一条状态 record。
- * @param {any} ctx - 插件上下文。
- * @param {any} session - 目标会话。
- * @param {object} payload - `{ op, ... }`。
- * @returns {Promise<boolean>} 是否真的写进了 log。
+ * Write one state record.
+ * @param {any} ctx - plugin context.
+ * @param {any} session - target session.
+ * @param {object} payload - `{ op, ... }`.
+ * @returns {Promise<boolean>} whether it actually landed in the log.
  */
 export async function writeState(ctx, session, payload) {
 	const previous = readState(ctx, session)
@@ -177,7 +181,7 @@ export async function writeState(ctx, session, payload) {
 	}
 }
 
-/** 用同一份折叠逻辑算下一个状态，保证镜像与投影不会分叉。 */
+/** Fold with the same logic, so the mirror and the projection cannot diverge. */
 function ratchetProjectionStateAfter(state, payload) {
 	return ratchetProjection.apply(state, { type: RECORD_TYPE, data: payload })
 }

@@ -1,19 +1,22 @@
-// dsh-ratchet 的浏览器端半边。
+// The browser half of dsh-ratchet.
 //
-// 两件事，都只在"看得见"这一层：
-//   ① tool.call.toolview —— 接管 ratchet_start / ratchet_checkpoint 的工具行，把它们从
-//      「未知工具 · 一坨原始参数 JSON」变成一张有段号、有产出、有校验徽章的小卡。
-//      数据来自 output.presentationMeta 投影出来的 block.meta.ratchet。
-//   ② 问题面板的正文（.wnLwla_detail）—— 宿主只给了 margin:0 2px 8px，长 markdown
-//      直接铺在深灰卡上就是一团。这里给它加内边距、底色、圆角，并把 markdown 的
-//      32px 大标题间距收掉，让它读起来像一段结论而不是一篇文章。
-//   ③ 设置页 —— 挂在插件管理页「dsh-ratchet 详情」的配置区（keyed 槽
-//      plugins.bundle.config，key = 包名），把 enabled / maxQuestions /
-//      validatorTimeoutMs / pythonPath / stageLimit / policyText 六个值交给他手改，
-//      走宿主的 configForms 表单，写入即热更新（host 侧 liveConfig 每次读都取最新值）。
+// Three things, all of them strictly about what is *visible*:
+//   (1) tool.call.toolview — takes over the ratchet_start / ratchet_checkpoint tool
+//       rows and turns them from "unknown tool · a blob of raw argument JSON" into a
+//       small card with a stage number, artifacts and verdict marks. The data comes
+//       from output.presentationMeta, projected to block.meta.ratchet.
+//   (2) The question panel body (.wnLwla_detail) — the host gives it nothing but
+//       margin:0 2px 8px, so long markdown sits directly on a dark grey card as one
+//       lump. This adds padding, a background and a radius, and collapses markdown's
+//       32px heading margins so it reads like a conclusion rather than an article.
+//   (3) The settings page — mounted in the config area of the "dsh-ratchet details"
+//       page (keyed slot plugins.bundle.config, key = package name), exposing
+//       enabled / maxQuestions / validatorTimeoutMs / pythonPath / stageLimit /
+//       policyText for editing through the host's configForms form; writes are hot
+//       (host side liveConfig re-reads the latest value every time).
 //
-// 不能写 ESM import：宿主用同源 classic script 加载这个文件，只认
-// window.__ModuleLoader__.load({ id, factory }) 这一种形态。
+// No ESM import here: the host loads this file as a same-origin classic script and
+// only recognises window.__ModuleLoader__.load({ id, factory }).
 
 window.__ModuleLoader__.load({
 	id: 'dsh-ratchet',
@@ -25,8 +28,9 @@ window.__ModuleLoader__.load({
 		const React = require('react')
 		const h = React.createElement
 
-		// ── 样式 ────────────────────────────────────────────────────────────────
-		// 颜色一律走主题令牌，不硬编码。浅色/深色由宿主变量自己切换。
+		// ── styles ──────────────────────────────────────────────────────────────
+		// Colours always come from theme tokens, never hard-coded. Light/dark switching
+		// is the host's job.
 		const CSS = `
 .drt-card {
 	display: flex;
@@ -117,7 +121,7 @@ window.__ModuleLoader__.load({
 .drt-check[data-verdict='WARN'] { color: var(--dsw-alias-state-warn-label); }
 .drt-check[data-verdict='FAIL'] { color: var(--dsw-alias-state-error-primary); }
 .drt-check[data-verdict='SKIP'] { color: var(--dsw-alias-label-dimmed); }
-/* 全跳过整条换成一句实话，比一排破折号长，得允许换行。 */
+/* All-skipped collapses to one honest sentence, longer than a row of dashes, so let it wrap. */
 .drt-checks[data-all-skipped='yes'] .drt-check { line-height: 17px; white-space: normal; }
 
 .drt-files {
@@ -166,10 +170,10 @@ window.__ModuleLoader__.load({
 	border-left: 2px solid var(--dsw-alias-border-l2);
 }
 
-/* ── 问题面板正文：宿主只给 margin:0 2px 8px，长 markdown 会糊成一片 ── */
-/* 三层区分：卡片 #2c2c2e → 正文块 #353638（亮一档）+ 左侧 3px 主色条。
-   边框用 l3（#ffffff29）而不是 l1（#ffffff0f）—— l1 在深底上几乎看不见，
-   只靠亮度差会让人以为"还是一整块"。 */
+/* ── Question panel body: the host gives only margin:0 2px 8px, so long markdown smears ── */
+/* Three layers: card #2c2c2e → body block #353638 (one step lighter) + a 3px accent bar.
+   The border uses l3 (#ffffff29) rather than l1 (#ffffff0f) — l1 is nearly invisible on a
+   dark ground, and brightness alone still reads as "one single block". */
 [data-question-key] [data-question-scroll] > div:first-child:not([role]) {
 	margin: 12px 14px 4px;
 	padding: 12px 14px 12px 15px;
@@ -187,8 +191,8 @@ window.__ModuleLoader__.load({
 	font-weight: 600;
 	color: var(--dsw-alias-label-primary);
 }
-/* 四级标题当分区标签用：小字号 + 字距 + tertiary 灰。
-   它和正文同字号时只能靠字重区分，在深色底上几乎看不出来。 */
+/* h4 doubles as a section label: small, letter-spaced, tertiary grey.
+   At body size the only difference would be weight, which is invisible on dark. */
 [data-question-key] [data-question-scroll] > div:first-child:not([role]) h4 {
 	margin: 14px 0 5px;
 	font-size: 11px;
@@ -206,7 +210,8 @@ window.__ModuleLoader__.load({
 }
 [data-question-key] [data-question-scroll] > div:first-child:not([role]) :is(ul, ol) { padding-left: 18px; }
 [data-question-key] [data-question-scroll] > div:first-child:not([role]) li:not(:first-child) { margin-top: 3px; }
-/* 有了四级标题当分区标签，hr 就不用再当分隔主力，压淡一点免得两重分隔打架。 */
+/* With h4 doing the sectioning, hr no longer carries the structure — dim it so the two
+   separators do not fight. */
 [data-question-key] [data-question-scroll] > div:first-child:not([role]) hr {
 	margin: 10px 0;
 	height: .5px;
@@ -224,7 +229,7 @@ window.__ModuleLoader__.load({
 	line-height: 18px;
 }
 
-/* ── 设置页：插件详情里的配置区 ── */
+/* ── Settings page: the config area inside the plugin details ── */
 .drt-settings {
 	display: flex;
 	flex-direction: column;
@@ -304,7 +309,7 @@ window.__ModuleLoader__.load({
 }
 `
 
-		// ── 小图标（内联 SVG，不 require 图标包，避免名字变动就白屏）───────────
+		// ── tiny icons (inline SVG; no icon package, so a rename upstream cannot blank us) ──
 		function glyph(verdict) {
 			const size = 12
 			const common = {
@@ -352,7 +357,7 @@ window.__ModuleLoader__.load({
 			return ''
 		}
 
-		/** 文件名只留最后两段，长路径会把这行撑爆。 */
+		/** Keep only the last two path segments; a long path blows this row apart. */
 		function tailPath(path) {
 			const parts = String(path).split(/[\\/]+/).filter((part) => part !== '')
 			if (parts.length <= 2) return parts.join('/')
@@ -373,8 +378,8 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * ratchet_start / ratchet_checkpoint 的工具行。
-		 * 宿主传进来的 owner 里可能没有 useDisclosure，所以要有一条自己的退路。
+		 * The tool row for ratchet_start / ratchet_checkpoint.
+		 * The owner object the host passes in may lack useDisclosure, so keep a fallback.
 		 */
 		function RatchetCard(props) {
 			const block = props.block ?? {}
@@ -390,7 +395,7 @@ window.__ModuleLoader__.load({
 			const files = meta !== null && typeof meta === 'object' && Array.isArray(meta.artifacts) ? meta.artifacts : []
 			const tone = toneOf(checks)
 
-			// 没有 meta（老会话、降级路径）就退回一行极简摘要，至少不丑。
+			// No meta (old session, degradation path): fall back to a minimal one-liner.
 			if (meta === null || typeof meta !== 'object') {
 				const raw = props.toolName ?? 'ratchet'
 				return h(
@@ -406,14 +411,15 @@ window.__ModuleLoader__.load({
 				)
 			}
 
-			// 空串也要兜底：`??` 只挡 undefined/null，'/ratchet' 不带话题时 topic 是 ''，
-			// 直接铺进去会变成一个没有标题的空卡片。
+			// An empty string needs its own fallback: `??` only catches undefined/null, and
+			// '/ratchet' with no topic sets topic to '', which would render a title-less card.
 			const topicLabel = typeof meta.topic === 'string' && meta.topic.trim() !== '' ? meta.topic : '对齐方向'
 			const title = isCheckpoint ? `第 ${meta.stageIndex ?? 1} 段 · ${meta.stage ?? ''}` : topicLabel
 			const more = files.length > 2 || (isCheckpoint && typeof meta.next === 'string' && meta.next !== '')
 
-			// 全跳过时不摆一排破折号 —— 三个 `–` 读起来像零件坏了，其实只是这个目录
-			// 还没建 CONTEXT.md / docs/adr/。压成一句实话，把原因说出来。
+			// When everything skipped, do not lay out a row of dashes — three `–` marks read
+			// like broken parts, while the truth is that this directory has no CONTEXT.md or
+			// docs/adr yet. Compress it into one plain sentence and name the reason.
 			const allSkipped = checks.length > 0 && checks.every((each) => each.verdict === 'SKIP')
 			const skipReasons = [...new Set(checks.map((each) => (typeof each.reason === 'string' && each.reason !== '' ? each.reason : '不适用')))]
 
@@ -503,12 +509,14 @@ window.__ModuleLoader__.load({
 			)
 		}
 
-		// ── 设置页 ──────────────────────────────────────────────────────────────
-		// 六个值分两类：
-		//   ① 五个标量走宿主的 SettingsFormModel —— 它自带「改了什么、能不能存、
-		//      存失败要不要留着」这套账，不用自己发明。
-		//   ② enabled 是个开关，宿主没有 boolean 字段原语，官方做法（settings-subagent）
-		//      是自己攒一个 draft，保存时和表单的 ops 一起 mutate。
+		// ── Settings page ───────────────────────────────────────────────────────
+		// The six values fall into two classes:
+		//   (1) the five scalars go through the host's SettingsFormModel — it already keeps
+		//       the ledger of "what changed, can it be saved, keep it on failure", so there
+		//       is no reason to invent another.
+		//   (2) `enabled` is a switch, and the host has no boolean field primitive; the
+		//       official pattern (settings-subagent) is to accumulate a draft yourself and
+		//       mutate it together with the form's ops on save.
 		const SETTINGS = {
 			ns: 'ratchet',
 			zoomKey: 'ratchetSettings',
@@ -539,7 +547,7 @@ window.__ModuleLoader__.load({
 			toggleFailed: '开关没写进去，请再试一次。',
 		}
 
-		/** 表单壳的文案（宿主 SettingsForm 的 labels 契约）。 */
+		/** Labels for the form shell (the host SettingsForm labels contract). */
 		const FORM_LABELS = {
 			unavailable: COPY.unavailable,
 			readOnly: COPY.readOnly,
@@ -549,8 +557,8 @@ window.__ModuleLoader__.load({
 		}
 
 		/**
-		 * 把「宿主表单」和「自己攒的开关」缝成一张卡。
-		 * SettingsFormModel 只认标量字段，enabled 必须单独保管。
+		 * Stitch the host form and the self-managed switch into one card.
+		 * SettingsFormModel only understands scalar fields, so `enabled` is kept apart.
 		 */
 		function createSettingsFace(scope, primitives) {
 			const { SettingsFormModel, settingsNumberField, settingsTextField } = primitives
@@ -571,7 +579,8 @@ window.__ModuleLoader__.load({
 			const store = form.bind(() => projection())
 			const unsubscribe = scope.subscribe(() => {
 				if (disposed) return
-				// 别人（或另一个窗口）改了设置：自己没攒草稿就跟上，攒了就对一下。
+				// Someone else (or another window) changed the settings: follow along if no
+				// draft is held; if one is, check whether it already landed.
 				if (draftEnabled !== undefined && scope.getSnapshot().revision !== draftRevision) {
 					const landed = scope.getSnapshot().value?.enabled
 					if (landed === draftEnabled) {
@@ -595,7 +604,7 @@ window.__ModuleLoader__.load({
 				const enabledDirty = draftEnabled !== undefined && draftEnabled !== currentEnabled()
 				return {
 					...shell,
-					// 开关也算一处改动，否则只拨开关时"保存"是灰的。
+					// The switch counts as a change too, or "Save" stays grey when only it moved.
 					dirty: shell.dirty || enabledDirty,
 					enabled: draftEnabled ?? currentEnabled(),
 					draftEnabled: draftEnabled !== undefined,
@@ -633,13 +642,15 @@ window.__ModuleLoader__.load({
 				if (disposed || snapshot.status !== 'ready' || !snapshot.writable) return
 
 				const enabledChanged = draftEnabled !== undefined && draftEnabled !== currentEnabled()
-				// 先让宿主表单存自己的字段 —— 它的 revision 基线、冲突判定、失败保留都测过。
+				// Save the host form's own fields first — its revision baseline, conflict
+				// detection and keep-on-failure behaviour are all already tested.
 				const formPending = typeof form.plan === 'function' && form.plan().length > 0
 				await form.actions().save()
 				if (disposed) return
 				if (form.shell().failed) {
-					// 表单没存成，开关也别跟着写。但开关位置保持他刚拨的那个（那是他的意图），
-					// 并明确说一句"没写进去"，不然界面上看着像已经关了。
+					// The form did not save, so the switch must not be written either. But leave
+					// the switch where the user just put it (that is their intent) and say
+					// plainly that it did not land, or the UI looks like it is already off.
 					toggleFailed = true
 					publish()
 					return
@@ -651,7 +662,8 @@ window.__ModuleLoader__.load({
 				}
 
 				const desired = draftEnabled
-				// 表单刚写过一版，revision 已经前进；还拿拨开关时的旧值去写会被冲突挡回。
+				// The form just wrote once, so the revision has advanced; writing with the
+				// stale value captured when the switch was flipped would hit a conflict.
 				const revision = formPending || draftRevision === undefined ? snapshotValue().revision : draftRevision
 				const accepted = await scope.mutate([{ op: 'set', path: ['enabled'], value: desired }], revision)
 				if (disposed) return
@@ -693,7 +705,7 @@ window.__ModuleLoader__.load({
 			}
 		}
 
-		/** 设置卡：summary 给列表用，page 给详情用。 */
+		/** The settings card: summary for the list, page for the details view. */
 		function RatchetSettingsCard(props) {
 			if (props.view === 'summary') return '开工前对齐方向、分段交付、每段停下来确认。'
 			const primitives = props.primitives
@@ -792,7 +804,7 @@ window.__ModuleLoader__.load({
 			)
 		}
 
-		/** SettingsValueField 的展开写法：宿主那一堆 label 文案每次都一样。 */
+		/** Expanded form of SettingsValueField: the host's label copy is the same every time. */
 		function field(SettingsValueField, options) {
 			const state = options.state
 			const slice = state[options.name]
@@ -815,11 +827,12 @@ window.__ModuleLoader__.load({
 			})
 		}
 
-		// ── 装配 ────────────────────────────────────────────────────────────────
+		// ── assembly ────────────────────────────────────────────────────────────
 		const plugin = {
 			name: 'dsh-ratchet',
-			// 只把 slots 写成硬依赖：工具行卡片是核心，设置页是加分项。
-			// configForms 用 ctx.get 可选取 —— 若某天宿主不 provide 它，卡片不能跟着一起消失。
+			// Only `slots` is a hard dependency: the tool row card is the core, the settings
+			// page is a bonus. configForms is fetched optionally — if the host ever stops
+			// providing it, the card must not disappear along with the page.
 			inject: ['slots'],
 			async apply(ctx) {
 				let styleEl = null
@@ -838,7 +851,7 @@ window.__ModuleLoader__.load({
 						}
 					})
 				} catch (error) {
-					console.error(`[dsh-ratchet] 注入样式失败：${String((error && error.message) || error)}`)
+					console.error(`[dsh-ratchet] failed to inject styles: ${String((error && error.message) || error)}`)
 				}
 
 				const slots = ctx.get === undefined ? undefined : ctx.get('slots')
@@ -853,13 +866,14 @@ window.__ModuleLoader__.load({
 					)
 				}
 
-				// 设置页。primitives 只能运行时 require —— 它没有独立包，是宿主 seed
-				// 白名单里的一项；拿不到就干脆不注册这一页，工具行照常工作。
+				// The settings page. primitives can only be required at runtime — it has no
+				// standalone package and is one entry in the host's seed whitelist; if it is
+				// missing, simply do not register this page and keep the tool rows working.
 				let primitives
 				try {
 					primitives = require('@deepseek-ai/dsh-client-ui-primitives')
 				} catch (error) {
-					console.error(`[dsh-ratchet] 读不到设置页原语，本次不挂设置页：${String((error && error.message) || error)}`)
+					console.error(`[dsh-ratchet] cannot reach the settings primitives, skipping the settings page: ${String((error && error.message) || error)}`)
 					return
 				}
 				if (
@@ -869,7 +883,7 @@ window.__ModuleLoader__.load({
 					typeof primitives.SettingsForm !== 'function' ||
 					typeof primitives.SettingsValueField !== 'function'
 				) {
-					console.error('[dsh-ratchet] 宿主原语版本不匹配（缺 SettingsForm/SettingsValueField），本次不挂设置页')
+					console.error('[dsh-ratchet] host primitives are the wrong version (missing SettingsForm/SettingsValueField), skipping the settings page')
 					return
 				}
 
@@ -892,9 +906,10 @@ window.__ModuleLoader__.load({
 					)
 				}
 
-				// 和宿主侧 registerProjection 一样的坑：装配时序上 configForms 可能还没
-				// provide，`ctx.get` 拿到 undefined 就永久跳过 —— 设置页于是整页消失，
-				// 且没有任何报错。所以能用 ctx.inject 就等它到位再挂。
+				// The same trap as registerProjection on the host side: at assembly time
+				// configForms may not be provided yet, and `ctx.get` returning undefined once
+				// skips the registration forever — the settings page then vanishes entirely
+				// with no error at all. So when ctx.inject is available, wait for it.
 				if (typeof ctx.inject === 'function') {
 					ctx.inject(['configForms'], (configCtx) => {
 						mountSettings(configCtx.configForms ?? configCtx.get?.('configForms'))

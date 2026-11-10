@@ -1,34 +1,72 @@
 # dsh-ratchet
 
-把 `grill-with-docs` 的访谈纪律，蒸馏成 DeepSeek Harness 里**能管住节奏**的插件。
+A ratchet for [DeepSeek Harness](https://github.com/deepseek-ai) agents: align the
+direction in a question panel **before** any work starts, deliver in counted
+stages, and force a review checkpoint — with the artifacts verified against disk —
+before the next stage can begin.
 
-它解决的不是「模型会不会提问」，而是模型**根本不停下来问**：一句"我理解你的意思了"就开始写代码，写完三百行才发现方向不对。提示词可以劝它停，但劝不住。所以这件事得由代码强制。
+The problem is not that a model will not ask questions. The problem is that it does
+not **stop** to ask: one "I understand" and three hundred lines later the direction
+turns out to be wrong. A prompt can ask it to stop; a prompt cannot make it. So the
+stop has to be code.
 
-## 为什么叫 ratchet
+---
 
-棘轮（ratchet）是一种只能朝一个方向转的齿轮，每转过一格就被棘爪卡住，**退不回去**。这正是这套流程的形状：
+## Compatibility
 
-- **单向**：只往前走，不回头重做——开工前对齐一次，比事后返工便宜得多。
-- **分格**：一格就是一个 stage，转一格响一声，那声"咔"就是 checkpoint。
-- **卡住**：没有你的确认，下一格转不动。不是模型"记得"要问你，是机制让它问不了就前进不了。
+- **DeepSeek Harness `>= 0.2.0-rc.1`** — declared under `dsh.engines.dsh`.
+- **Node.js `>= 22`** — no build step, no bundler.
+- **Verified on:** DSH Desktop **44.7.0** (Windows) — tool rows render as custom
+  cards, the question panel takes the injected stylesheet, and the config page
+  appears under *Settings → Plugins → dsh-ratchet → Config*.
 
-三个字都有机械上的对应物，不是硬凑的比喻。
+It uses public APIs only: `systemPrompt.section`, `commands.register`,
+`tools.register`, `userQuestions.ask`, `sessionProjections.register`, and the
+`tool.call.toolview` / `plugins.bundle.config` seats. If a future build changes
+their shape, the host half warns and registers nothing instead of taking the host
+down, and the client half falls back to a one-line card.
 
-## 它强制的三件事
+---
 
-| | skill 的做法 | 本插件的做法 |
+## Why "ratchet"
+
+A ratchet turns one way only. Each tooth is caught by a pawl and **cannot come
+back**. That is the shape of this flow:
+
+- **One way.** Align once up front; never redo the direction later. Aligning costs
+  a minute, rework costs a day.
+- **Tooth by tooth.** One tooth is one stage. It clicks, and the click is a
+  checkpoint.
+- **Caught.** Without your confirmation the next tooth will not turn. Not because
+  the model "remembers" to ask — because the mechanism cannot advance if it does
+  not.
+
+Every part of the name has a mechanical counterpart. It is not a stretched
+metaphor.
+
+---
+
+## What it forces
+
+| | what a skill does | what this plugin does |
 |---|---|---|
-| **问方向** | 在聊天里逐条问 | 弹面板（`ctx.userQuestions.ask`），问题必须出现在界面上，不能散在聊天里 |
-| **分段** | 靠模型自己把握 | 显式 stage，段号可数，写进提示词——「当前进度：第 N 段」 |
-| **验收** | 靠模型自己记得 | `ratchet_checkpoint`：不确认就没有下一段，且验收面板里的产出是**插件读文件核实过的** |
+| **Ask the direction** | asks in chat, one line at a time | opens a question panel (`ctx.userQuestions.ask`); the questions have to appear in the UI, they cannot leak into chat |
+| **Split the work** | the model paces itself | explicit stages, numbered, written into the prompt — "current position: stage N" |
+| **Get it accepted** | the model remembers to ask | `ratchet_checkpoint`: no confirmation, no next stage — and the artifact list on that panel was **verified by reading the disk** |
 
-第三条是重点。模型说"我改了三个文件"，插件去 `statSync` 那三个路径，读不到就标 **缺失**，不读它的自述。同一张面板里还附上 `CONTEXT.md` 术语表、`docs/adr` 编号、术语↔代码一致性三项校验——这三个 Python 校验器原本在 skill 里靠模型自觉跑，现在每次 checkpoint 必跑。
+The third row is the point. The model says "I changed three files"; the plugin runs
+`statSync` on those three paths, and anything missing is marked **missing** instead
+of taken on trust. The same panel also carries three document checks — the
+`CONTEXT.md` glossary, the `docs/adr` numbering, and glossary↔code consistency.
+In the skill those Python validators were run whenever the model felt like it. Here
+they run on every checkpoint.
 
-## 装
+---
 
-工具定义手写成 raw JSON Schema，所以没有 zod、没有 `dsh-tools` 依赖。唯一的包依赖是 `@deepseek-ai/schemastery`（声明在 `peerDependencies`，用宿主的副本）——因为设置页的 `Config` 必须是一个能被宿主 `describe()` 认出来的 schema。`peerDependencies` 而不是 `dependencies` 是硬要求：宿主对被 link 进来的插件只按 `peerDependencies` 放行 `@deepseek-ai/*` 的解析。
+## Install
 
-在 profile 的 `package.json` 里挂上。从 npm 装就写版本号，本地开发就写 `link:`：
+Add it to the profile's `package.json`. From npm, pin a version; for local
+development, use `link:`:
 
 ```json
 {
@@ -43,184 +81,320 @@
 }
 ```
 
-本地路径开发时把上面那行换成 `"dsh-ratchet": "link:H:/Deepseekstudio/workspace2/dsh-ratchet"`。
+For local work replace the dependency with
+`"dsh-ratchet": "link:/absolute/path/to/dsh-ratchet"`.
 
-然后在该 profile 目录跑 `pnpm install`（用 `link:` 时它会生成 junction；从 npm 装时就是普通解包），重启 DSH。
+Then run `pnpm install` in the profile directory — with `link:` it creates a
+junction, from npm it unpacks normally — and restart DSH.
 
-配置**不用手改文件**：装好之后进「设置 → 插件 → dsh-ratchet → 配置」，六个值都能在那儿改，保存即生效（不重启）。底下的 `cordis.patch.yml` 只是初始值。
+The tool schemas are hand-written raw JSON Schema, so there is no `zod` and no
+`dsh-tools` dependency. The one package dependency is
+`@deepseek-ai/schemastery`, declared under **`peerDependencies`** and resolved from
+the host's own copy, because the config page needs a `Config` schema that the
+host's `describe()` will recognise. `peerDependencies` is not a preference here:
+the host only allows `@deepseek-ai/*` specifiers through for a linked plugin when
+the name appears in its `peerDependencies`.
 
-| 键 | 默认 | 说明 |
+### Configuration
+
+Nothing to hand-edit. After install, open
+**Settings → Plugins → dsh-ratchet → Config**; all six values are editable there and
+saving takes effect immediately, without a restart. `cordis.patch.yml` is only the
+starting point.
+
+| Key | Default | Meaning |
 |---|---|---|
-| `enabled` | `true` | `false` 时一个东西都不注册；运行中关掉则 `/ratchet`、两个工具、提示词段立刻失效 |
-| `maxQuestions` | `5` | 一轮最多几题（1–5） |
-| `validatorTimeoutMs` | `20000` | 单个校验脚本的超时（最小 1000） |
-| `pythonPath` | `''` | 显式 python 路径；留空则探测 `python` / `python3` / `py -3` / DSH 自带运行时 |
-| `stageLimit` | `5` | 一次流程建议的段数，写进提示词（1–12） |
-| `policyText` | `''` | 覆盖默认纪律文案；留空用内置那六条 |
+| `enabled` | `true` | `false` registers nothing; turning it off while running disables `/ratchet`, both tools and the prompt section at once |
+| `maxQuestions` | `5` | Questions per round (1–5) |
+| `validatorTimeoutMs` | `20000` | Timeout for one validation script (min 1000) |
+| `pythonPath` | `''` | Explicit interpreter; empty probes `python` / `python3` / `py -3` / the runtime bundled with DSH |
+| `stageLimit` | `5` | Suggested stage count for one flow, written into the prompt (1–12) |
+| `policyText` | `''` | Replace the built-in discipline text; empty keeps the six shipped lines |
 
-改完立刻生效靠的是 `plugin/config.mjs` 的 `liveConfig()`：它给每个字段装 getter，读的时候才去取 cordis 的 volatile 引用，所以不用重新 `apply()`、不用重启。
+Live updates come from `liveConfig()` in `plugin/config.mjs`: every field is a
+getter that reads the cordis volatile reference at access time, so no re-`apply()`
+and no restart is needed.
 
-## 用
+---
 
-### 1. 开一条流程
+## Use
+
+### 1. Open a flow
 
 ```
-/ratchet 做一个能把论文 PDF 批量转 markdown 的小工具
+/ratchet turn a folder of paper PDFs into markdown
 ```
 
-`/ratchet off` 退出。不带话题时只进流程、不给标题——它会明确告诉你「这一轮还没定要做什么」，让你补一句，而不是拿一个像「未命名任务」的占位词冒充方向。
+`/ratchet off` exits. With no topic it opens the flow **without inventing a
+title** — it says plainly that nothing is decided yet and asks you for one line,
+rather than parking a placeholder like "unnamed task" in the prompt as if the
+direction were known.
 
-### 2. 弹对齐面板
+### 2. Let it ask
 
-模型调 `ratchet_start`：
+The model calls `ratchet_start`:
 
 ```json
-{ "topic": "PDF 批量转 markdown", "mode": "kickoff", "brief": "我猜你要的是能跑在本地、不要联网的方案" }
+{ "topic": "PDF folder to markdown", "mode": "kickoff", "brief": "I assume you want it local and offline" }
 ```
 
-插件先扫目录（`CONTEXT.md` / `CONTEXT-MAP.md` / `README.md` / `package.json` / `pyproject.toml` / `AGENTS.md` / `CLAUDE.md` / `docs/adr`），把**已经能读出来的答案从句子里剔掉**：有 `package.json` 就不问技术栈，有 `CONTEXT.md` 就不问术语。面板顶部会列出「开工前读到的」，让你看得见模型到底读了什么——它要是没读，你一眼就知道。
+The plugin scans the directory first (`CONTEXT.md`, `CONTEXT-MAP.md`, `README.md`,
+`package.json`, `pyproject.toml`, `AGENTS.md`, `CLAUDE.md`, `docs/adr`) and drops
+every question the files already answer: a `package.json` means no stack question,
+a `CONTEXT.md` means no terminology question. What it actually read is listed at
+the top of the panel, so you can see whether it looked or just guessed.
 
-默认四到五题：方向 / 验收 / 改动边界 / 节奏（缺依赖清单时补一题技术栈）。每题第一个选项都带 **（推荐）**，不选也能直接回车。
+Four to five questions by default: direction, acceptance, boundary, rhythm — plus a
+stack question only when no manifest exists. The first option of each carries
+**(recommended)**, so pressing Enter is a valid answer.
 
-### 3. 一段做完，出验收面板
+### 3. Close a stage
 
 ```json
 {
-  "stage": "先把 PDF 抽取跑通",
-  "summary": "用 pypdf 抽文本，已能处理单栏论文；双栏顺序还是乱的，留到下一段。",
+  "stage": "get PDF extraction working",
+  "summary": "pypdf pulls text fine on single-column papers; two-column order is still scrambled, next stage.",
   "artifacts": ["src/extract.py", "test/test_extract.py"],
-  "next": "处理双栏排版",
-  "decisions": ["不引入 OCR，扫描件这一版不支持"]
+  "next": "handle two-column layout",
+  "decisions": ["no OCR — scanned PDFs are out of scope for this version"]
 }
 ```
 
-出面板（正文是渲染后的 markdown，不是原始文本）：
+The panel body is rendered markdown, not raw text. Section labels and skip reasons
+are on-screen copy and follow the user's language (they are Chinese in the sample
+below this plugin ships for its author); they are shown in English here for
+readability:
 
 ```
-> **第 1 段 · 先把 PDF 抽取跑通**
+> **Stage 1 · get PDF extraction working**
 
-用 pypdf 抽文本，已能处理单栏论文；双栏顺序还是乱的，留到下一段。
+pypdf pulls text fine on single-column papers; two-column order is still
+scrambled, next stage.
 
 ---
 
-#### 产出
+#### Artifacts
 
-- `src/extract.py` · 96 行
-- `test/test_extract.py` · 31 行
-
----
-
-#### 定下的
-
-- 不引入 OCR，扫描件这一版不支持
+- `src/extract.py` · 96 lines
+- `test/test_extract.py` · 31 lines
 
 ---
 
-#### 文档校验
+#### Decided
 
-术语表 !　ADR –　一致性 –
-
-- no-avoid: 术语「Session」缺 `_Avoid_` 行
+- no OCR — scanned PDFs are out of scope for this version
 
 ---
 
-> 上一段是「对齐方向」。
+#### Document checks
+
+glossary !　ADR –　consistency –
+
+- no-avoid: term "Session" is missing its `_Avoid_` line
 
 ---
 
-> **下段**　处理双栏排版
+> Previous stage was "align the direction".
+
+---
+
+> **Next**　handle two-column layout
 ```
 
-三个校验器压成一行徽章（`✓` 通过 / `!` 有问题 / `×` 失败 / `–` 跳过），只有出问题的项才展开细节，最多三条，其余折成「另有 N 条」。整段正文包在一个带底色和边框的分区里，不再直接糊在卡片上。
+Three validators collapse into one row of marks (`✓` pass / `!` problem / `×` fail /
+`–` skipped); only the failing items expand, at most three, the rest become "N
+more". The whole body sits in a bordered block with its own background instead of
+being poured straight onto the card.
 
-**全跳过时不用一排 `–`。** 三个都跳过意味着这个目录还没有 `CONTEXT.md` 和 `docs/adr/`，校验器无事可做——但 `– – –` 读起来像零件坏了，是在报故障而不是报状态。所以那种情况直接换成一句实话加原因：
+**When all three skip, it does not print a row of dashes.** Three skips mean the
+directory has no `CONTEXT.md` and no `docs/adr/` yet — the validators have nothing
+to read — but `– – –` reads like broken machinery, a fault report rather than a
+status. So that case becomes one honest sentence plus the reasons:
 
 ```
-#### 文档校验
+#### Document checks
 
-3 个校验器都没跑 —— 这个目录还没有它们要查的东西：
+3 validators did not run — this directory has nothing for them to check yet:
 
-- 没有 CONTEXT.md（这段还没建术语表）
-- 没有 docs/adr/（这段不需要决策记录）
+- no CONTEXT.md (no glossary in this stage)
+- no docs/adr/ (no decision record needed here)
 ```
 
-原因完全相同时（比如都缺 `CONTEXT.md`）压成一行；前缀重复的会被吃掉（「没有 CONTEXT.md」和「没有 CONTEXT.md（这段还没建术语表）」只说一遍）。工具行卡片上同理，一行 `– 没跑校验 —— 没有 CONTEXT.md`，`title` 里放完整原因。真跑失败了也分行说人话：`python 起不来（找不到这个解释器）`、`超时`、`被中断`，而不是把 `spawn … ENOENT` 摆在用户面前。
+Identical reasons collapse to one line, and prefix duplicates are absorbed ("no
+CONTEXT.md" and "no CONTEXT.md (no glossary in this stage)" are said once). The tool
+row says the same thing in one line — `– checks did not run — no CONTEXT.md` — with
+the full reason in the `title`. A real failure also gets plain words:
+`python won't start (interpreter not found)`, `timed out`, `interrupted` — never
+`spawn ... ENOENT` in the user's face.
 
-产出那一栏的路径不是照抄模型说的话，而是插件真去磁盘上找了一遍。相对路径按三级解析：绝对路径原样 → 工作目录直下 → 工作目录的**一级子目录**（跳过 `node_modules` 和点目录，最多扫 16 个）。第三级是专门为这个坑准备的：模型说"我改了 `plugin/render.mjs`"时，它心里的根目录常常是项目子目录，而工作目录在上一层，直接拼接就会得到一个不存在的路径，把真实存在的文件标成"缺失"——用户看到的是"它在骗我"。真找不到时也不只说"缺失"，而是把找过的绝对路径一起写出来（`**缺失**（按 \`H:\work\plugin\render.mjs\` 找过）`），子目录命中的会注明是在哪一层找到的（`· 171 行 · 在 \`dsh-ratchet/\` 下`）。
+The paths in the artifact list are not copied from what the model said; the plugin
+looks for them. Relative paths resolve in three steps: absolute as-is → directly
+under the working directory → **one level of subdirectories** (skipping
+`node_modules` and dot-directories, at most 16). The third step exists for one
+specific trap: when the model says "I changed `plugin/render.mjs`", the root in its
+head is often the project subdirectory while the working directory sits one level
+above, so naive joining produces a path that does not exist and marks a real file
+as missing — which reads to the user as "it is lying to me". When a file really is
+absent, the message includes the absolute path that was searched
+(`**missing** (looked for \`/work/plugin/render.mjs\`)`), and a subdirectory hit
+says which level it was found at (`· 171 lines · under \`dsh-ratchet/\``).
 
-选项：`继续下一步（推荐）`（描述里带下一段做什么）/ 你额外给的路线 / `换个方向`（输入框写新方向）/ `停在这里`。
+Options: `continue (recommended)` with the next stage in its description, up to two
+alternatives you passed in, `change direction` (type the new one), `stop here`.
+Choosing "change direction" writes the new direction into the projection and the
+next stage follows it; "stop here" closes the flow and the prompt section stops
+being injected.
 
-选「换个方向」时写的内容会进状态，下一段按新方向走；选「停在这里」流程关闭，纪律段不再注入。
+---
 
-## 界面
+## UI
 
-插件带一个浏览器端半边（`plugin/client.js`），做两件事：
+The plugin ships a browser half (`plugin/client.js`) that does three things.
 
-**工具行卡片。** `ratchet_start` / `ratchet_checkpoint` 在会话里的工具行不再是一坨原始参数 JSON，而是自己的卡片：一条状态点（蓝=进行中、绿=通过、黄=有问题、灰=跳过）、阶段标题、校验徽章、产出文件清单（缺失的标红）、可展开的「下段」。数据来自工具的 `output.presentationMeta`，结构化 JSON 直接投影到 `block.meta`，不靠模型复述。
+**Tool rows.** `ratchet_start` / `ratchet_checkpoint` no longer render as a blob of
+raw arguments. They render as their own card: a status dot (blue running, green
+pass, amber problem, grey skipped), the stage title, the check marks, the artifact
+list with missing files flagged, and a collapsible "next". The data comes from the
+tool's `output.presentationMeta`, structured JSON projected onto `block.meta` —
+never from the model retelling its own work.
 
-**问题面板正文。** 面板卡本身是宿主的，插件改不了它的结构，但可以用注入的 CSS 给正文区加一层：底色 `--dsw-alias-bg-module-platform`、圆角、内边距，并把宿主的 markdown 默认间距（标题 `32px`）收紧到面板能用的尺度。选择器靠 `[data-question-scroll] > div:first-child:not([role])` 精确命中正文，不碰选项列表。
+**Panel body.** The panel card belongs to the host and its structure cannot be
+changed, but an injected stylesheet gives the body its own layer: background,
+radius, padding, and the host's markdown defaults tightened (headings from `32px`
+down to panel scale). The selector is
+`[data-question-scroll] > div:first-child:not([role])`, which hits the body and
+leaves the option list alone.
 
-**设置页。** 挂在「设置 → 插件 → dsh-ratchet → 配置」（keyed 槽 `plugins.bundle.config`，key 就是包名），走宿主的 `configForms` 表单：五个标量用 `SettingsFormModel` 管草稿与冲突重试，`enabled` 这个开关宿主没有原语，就自己攒一个 draft，保存时**先存表单、再拿表单写完后的新 revision 存开关**。
+**Config page.** Mounted at *Settings → Plugins → dsh-ratchet → Config* through the
+keyed seat `plugins.bundle.config` (key = package name), on the host's
+`configForms`. The five scalars go through `SettingsFormModel` for drafting and
+conflict retry; `enabled` has no primitive, so it keeps its own draft and the save
+path **writes the form first, then writes the switch with the revision the form just
+produced**.
 
-这两步必须是两次写、不能合成一次：`SettingsFormModel.save()` 内部会用自己的 baseline revision 推进一版，把开关的 op 拼进去等于拿旧 revision 去写，必被 `SETTINGS_CONFLICT` 挡回。测试里用「第二次写必须带 `revision === 2`」把这个顺序钉住了。
+Those must be two writes, never one: `SettingsFormModel.save()` already advances the
+revision with its own baseline, so appending the switch op to that batch means
+writing with a stale revision — guaranteed `SETTINGS_CONFLICT`. The test pins the
+order with "the second write must carry `revision === 2`".
 
-表单失败时也不偷偷写开关——开关留在他拨的位置，另外提示一句「开关没写进去，请再试一次」，不装作成功。关掉开关后 `/ratchet`、两个工具、提示词段立刻失效，不用重启。
+A failed form does not silently write the switch either: it stays where you put it
+and says "the switch was not saved, try again", rather than pretending. Turning it
+off disables `/ratchet`, both tools and the prompt section immediately.
 
-CSS 只用 `--dsw-alias-*` 主题令牌，不硬编码颜色，深浅两套主题都跟着走。宿主改版导致 class 名变化时卡片会退回一行极简样式，不会报错；设置页原语版本不匹配时那一页干脆不挂，工具行照常工作。
+CSS uses `--dsw-alias-*` theme tokens only, with no hard-coded colours, so both
+themes follow. If a host update changes the class structure the card degrades to a
+single line rather than throwing, and if the config primitives do not match the
+page is simply not mounted — the tool rows keep working.
 
-## 三处刻意没做的事
+---
 
-**不做"新任务自动进对齐模式"。** 自动嗅探"这算不算新任务"会误伤闲聊和无害问题，而且一旦误判，用户每次对话都先挨一张面板。所以只 `/ratchet` 显式进入，代价是用户要记一个命令；换来的是这个插件永远不会在不该出现的时候出现。
+## Honest limits
 
-**不用 `plan-review` intent。** 那套 intent 会和 plan-mode 的审批态互掐（它要求 `approve` 命中某个 option label）。这里只用普通题目 + `detail` 承载正文。
+- **No automatic entry.** It never guesses whether a message starts a new task.
+  Sniffing "is this a new task" misfires on small talk and harmless questions, and
+  one misfire means a panel before every conversation. The price is remembering one
+  command; what it buys is a plugin that can never appear when it should not.
+- **No `plan-review` intent.** That intent conflicts with plan-mode's approval
+  state, which requires `approve` to match an option label. Plain questions carrying
+  the body in `detail` avoid the collision.
+- **Sub-agents cannot open the panel.** `userQuestions` accepts root agents only;
+  a delegated caller throws `DELEGATED_CALLER`. That is caught and degraded to the
+  same content as a chat message, so a sub-agent can relay it and you can answer —
+  rather than a tool call failing outright.
+- **The panel styling is a guest.** It depends on host DOM hooks
+  (`data-question-scroll`) and the theme tokens above. A host rewrite can take the
+  visual layer away; it cannot break the flow.
 
-**子 agent 弹不出面板时不硬来。** `userQuestions` 只接受 root agent，子 agent 会抛 `DELEGATED_CALLER`。捕获它，把同样的内容降级成聊天里的一段文本，让子 agent 转述、由用户回话——而不是让工具调用直接失败。
+---
 
-## 开发
+## Development
 
-```bash
-npm run check   # 六个文件的语法检查
-npm test        # node --test，118 个用例
+```sh
+npm run check   # syntax check on six files
+npm test        # node --test, 129 cases, in order
 ```
 
-测试分三层。第一层不开 DSH：用假 ctx 跑注册路径，验「未激活时纪律段返回空串」（否则常驻上下文白烧 token）、`mergeQuestions` 的去重裁剪、投影四个 op 的折叠、以及校验器在缺 python / 缺文件 / 超时 / abort 时**永不抛**。第二层验正文渲染：`render.mjs` 的输出结构（徽章、缺失标注、折叠计数、不含原始 HTML 和任务列表——宿主的 MarkdownText 不支持 GFM）。第三层（`test/integration.test.mjs`）用真 `Session` / 真 cordis `Context` / 真 `SessionProjectionRegistry` / 真 `appendPluginRecord` 跑一遍，验三件只有真包才验得了的事：record type 过得了宿主的类型正则、投影能从真 event log 里把状态折叠回来、无关事件不换引用（换了宿主就白重算 view）。`test/client.test.mjs` 用 `new Function` 造一个假 `window`/`document` 把浏览器半边跑起来，验它注册了哪两个 key、样式有没有注入和清理、拿不到 `block.meta` 时会不会崩。
+Tests come in layers. The first does not boot DSH: a fake `ctx` exercises the
+registration paths and pins that the discipline section returns an empty string when
+inactive (a resident section would burn tokens on every request), that
+`mergeQuestions` dedupes and trims, that the projection folds four ops, and that the
+validators **never throw** on a missing python, a missing file, a timeout or an
+abort. The second checks the rendered body: `render.mjs` output structure — the
+marks, the missing-file annotations, the collapse count, and the absence of raw HTML
+and task lists, which the host's `MarkdownText` does not support. The third
+(`test/integration.test.mjs`) runs against a real `Session`, a real cordis
+`Context`, a real `SessionProjectionRegistry` and a real `appendPluginRecord`, and
+verifies the three things only the real packages can: that the record type passes
+the host's type regex, that the projection folds state back out of a real event log,
+and that unrelated events do not swap the state reference (a swap would make the
+host recompute the view for nothing). `test/client.test.mjs` builds a fake
+`window`/`document` with `new Function` and runs the browser half: which two keys it
+registers, whether the stylesheet is injected and cleaned up, and whether it
+survives a missing `block.meta`.
 
-裸 node 里 `@deepseek-ai/*` 解析不到（profile 的 node_modules 没有这个 scope，靠宿主启动时装的 ResolutionRouter 才通），所以 `test/register.mjs` + `test/host-resolver.mjs` 是一层只给测试用的 ESM 解析钩子，把 specifier 指到宿主安装目录。生产代码不依赖它 —— 解析不到时 `writeState` 会退回内存镜像，这是设计好的降级路径。
+Under bare Node, `@deepseek-ai/*` does not resolve — the profile's `node_modules`
+has no such scope; resolution works only through the `ResolutionRouter` the host
+installs at launch. `test/register.mjs` plus `test/host-resolver.mjs` are an ESM
+resolution hook for tests only. Production code does not rely on it: when the import
+fails, `writeState` falls back to an in-memory mirror, which is a designed
+degradation path, not an accident.
 
-`plugin/vendor/` 里是从 `H:\Deepseekstudio-data\skills\grill-with-docs\scripts` 复制的三个 stdlib-only Python 校验器（MIT，Matt Pocock 上游）。源目录只读，改动请改 vendor 副本。
+`plugin/vendor/` holds the three stdlib-only Python validators copied from
+`grill-with-docs` (MIT, upstream by Matt Pocock). The upstream directory is
+read-only; change the vendored copy.
 
-### 对上游的三处本地增强
+### Three local additions to the vendored validators
 
-直接照搬会让「术语↔代码一致性」这项在 DSH 项目里永远不说话、或者开口全是废话，所以 vendor 副本里改了三处，每处都在代码里标了 `[ratchet 本地增强]`：
+Copied as-is, the glossary↔code check either never speaks in a DSH project or
+speaks only noise, so the vendored copy carries three changes, each marked
+`[ratchet local addition]` in code:
 
-1. **`DEFAULT_EXTENSIONS` 加 `.mjs` / `.cjs`。** 上游只认 `.py/.ts/.js/...`，而 DSH 插件主体全是 `.mjs` —— 扫出 0 个文件就会被判定"没有可扫的源文件"然后跳过，这项校验等于没装。
-2. **`count_term_in_text` 允许一个可选复数后缀**（`\bTerm(?:s|es)?\b`）。术语表里写单数 `Artifact`、代码里用复数 `artifacts` 是常态，上游会把它判成"死术语"。实测这一条把 `Artifact` 从 0 修正到 14。
-3. **`--exclude` 参数 + 跳过全大写词。** 前者的用途是排掉 `plugin/vendor/`（那里全是上游样例数据 `Order`/`Customer`/`Product`，会冒充本项目的未定义领域词）；后者是因为 `COPY`/`DEFAULTS`/`SKIP`/`ADR` 这类常量名和缩略语被当成"该定义的领域词"报出来时，二十五条噪声里有用的只剩几条，真信号就被淹了。
+1. **`.mjs` / `.cjs` added to `DEFAULT_EXTENSIONS`.** Upstream knows
+   `.py/.ts/.js/...` only, while DSH plugins are almost entirely `.mjs` — zero files
+   scanned means "nothing to check" and the whole check is skipped, i.e. not
+   installed at all.
+2. **`count_term_in_text` accepts an optional plural suffix**
+   (`\bTerm(?:s|es)?\b`). A glossary entry written as `Artifact` against code that
+   says `artifacts` is normal; upstream called that a dead term. Measured: `Artifact`
+   0 → 14.
+3. **An `--exclude` flag, plus skipping all-caps words.** The flag keeps
+   `plugin/vendor/` out of the scan — it holds upstream sample data
+   (`Order`/`Customer`/`Product`) that would pose as undefined domain terms here. The
+   all-caps skip is because `COPY`/`DEFAULTS`/`SKIP`/`ADR` were being reported as
+   "terms that should be defined", and twenty-five lines of that drowns the real
+   signal.
 
-这三处都是增量，默认值保持上游行为不变；`test/validators.test.mjs` 里各有一条回归测试钉着，免得日后从上游同步时被覆盖掉。
+All three are additive; the defaults keep upstream behaviour. Each has a regression
+test in `test/validators.test.mjs` so a future upstream sync cannot quietly undo it.
 
-## 文件
+---
+
+## Layout
 
 ```
 package.json
 cordis.patch.yml
+CONTEXT.md                  the plugin's own glossary — it validates itself
+docs/adr/0001-*.md          one decision record, on projections over state files
 plugin/
-  index.mjs       段 + 命令 + 两个工具
-  config.mjs      六个可改字段的 schema + liveConfig 热读取
-  render.mjs      面板正文的排版（只产出 MarkdownText 支持的语法）
-  client.js       浏览器半边：工具行卡片 + 面板 CSS + 设置页
-  state.mjs       投影 + plugin record 读写
-  validators.mjs  三个校验器的封装（降级永不抛）
-  vendor/*.py     CONTEXT.md / ADR / 术语↔代码 校验器
+  index.mjs                 prompt section + command + two tools
+  config.mjs                six configurable fields + liveConfig hot reads
+  render.mjs                panel body layout (MarkdownText-safe syntax only)
+  client.js                 browser half: tool cards, panel CSS, config page
+  state.mjs                 projection + plugin record read/write
+  validators.mjs            wrappers around the three validators (never throw)
+  vendor/*.py               CONTEXT.md / ADR / glossary↔code validators
 test/
-  index.test.mjs        段 + 命令 + 组装
-  render.test.mjs       面板正文的排版
-  client.test.mjs       浏览器半边：卡片注册、样式注入、设置页读写
-  validators.test.mjs   三个校验器的降级行为
-  tools.test.mjs        两个工具的 execute 全路径（假面板）
-  integration.test.mjs  真宿主：Session + cordis + 投影注册表
-  register.mjs          测试用解析钩子注册
-  host-resolver.mjs     把 @deepseek-ai/* 指到宿主安装目录
+  index.test.mjs            section + command + assembly
+  render.test.mjs           panel body layout
+  client.test.mjs           browser half: card registration, styles, config page
+  validators.test.mjs       degradation behaviour of the three validators
+  tools.test.mjs            full execute() paths against a fake panel
+  integration.test.mjs      real host: Session + cordis + projection registry
+  register.mjs              test-only resolution hook registration
+  host-resolver.mjs          maps @deepseek-ai/* to the host install directory
 ```
+
+## License
 
 MIT.

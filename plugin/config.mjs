@@ -1,20 +1,24 @@
-// dsh-ratchet 的配置面。
+// The configuration surface of dsh-ratchet.
 //
-// 两个职责：
-//   ① 导出 `Config` —— schemastery schema。DSH 的设置页只认这个形状：
-//      `entry.fiber.runtime.Config` 必须存在、带 `toJSON()`、且至少一个字段带 volatile。
-//      volatile 字段才是"可写"的：非 volatile 的字段既不会出现在表单里，写了也会被拒。
-//   ② 提供 `liveConfig()` —— 一层取值代理，让调用点永远拿到**当前**值。
+// Two jobs:
+//   1. Export `Config` — the schemastery schema. This is the only shape the DSH
+//      settings page recognises: `entry.fiber.runtime.Config` has to exist, carry
+//      `toJSON()`, and have at least one volatile field. Only volatile fields are
+//      writable; a non-volatile field neither appears in the form nor accepts a
+//      write.
+//   2. Provide `liveConfig()` — a value proxy so every call site reads the
+//      *current* value.
 //
-// 为什么需要 ②：设置页的写入是热更新的，进程不重启、`apply()` 不会再跑一遍。
-// 如果在装配时把 `config.maxQuestions` 抄进一个普通对象，用户改完设置会毫无反应，
-// 直到他重启 —— 那这个设置页等于假的。cordis 把 volatile 字段包成带 `get()` 的
-// 引用对象（cosmokit 的 `isVolatile` 判据是 `'write' in value`），所以每次读都
-// 重新 `.get()` 一次，就能拿到最新值。
+// Why (2) is needed: settings writes are hot. The process does not restart and
+// `apply()` does not run again. Copying `config.maxQuestions` into a plain object
+// at assembly time would make the settings page a lie — the user edits a value and
+// nothing happens until a restart. cordis wraps volatile fields in a reference
+// object with `get()` (cosmokit's `isVolatile` test is `'write' in value`), so
+// calling `.get()` on every read returns the latest value.
 
 import z from '@deepseek-ai/schemastery'
 
-/** 全部配置项的默认值。`apply()` 收到的 config 缺哪项就用这里的。 */
+/** Defaults for every option. Anything missing from `apply()`s config uses these. */
 export const DEFAULTS = {
 	enabled: true,
 	maxQuestions: 5,
@@ -25,11 +29,13 @@ export const DEFAULTS = {
 }
 
 /**
- * 配置 schema。
+ * The config schema.
  *
- * 六个字段全部 volatile：它们都该能在设置页里改，而且都不需要重启。
- * `enabled` 的处理特殊一点 —— 关掉它之后，已经注册的工具会拒绝执行、纪律段会消失，
- * 但装配期就带 `enabled: false` 的话仍然是什么都不注册（那种情况本来就不该占 token）。
+ * All six fields are volatile: each is meant to be editable from the settings page,
+ * and none of them requires a restart. `enabled` is slightly special — turning it
+ * off at runtime makes the registered tools refuse and the discipline section
+ * disappear, but arriving with `enabled: false` at assembly time still registers
+ * nothing at all (that case should not occupy any prompt tokens to begin with).
  */
 export const Config = z.object({
 	enabled: z.boolean().default(DEFAULTS.enabled).description('启用 ratchet 流程（关掉后 /ratchet 与两个工具都不工作）').volatile(),
@@ -68,7 +74,7 @@ export const Config = z.object({
 		.volatile(),
 })
 
-/** cordis 的 volatile 字段是带 `get()` 的引用对象；普通值原样返回。 */
+/** cordis volatile fields are reference objects with `get()`; plain values pass through. */
 function unwrap(value) {
 	if (value === null || typeof value !== 'object') return value
 	if (typeof value.get !== 'function') return value
@@ -80,12 +86,13 @@ function unwrap(value) {
 }
 
 /**
- * 一层取值代理：属性访问即读当前值。
+ * A read-through proxy: property access returns the current value.
  *
- * 这样 `index.mjs` 里的 `settings.maxQuestions` 之类一行都不用改，
- * 而语义从"装配时快照"变成"每次用都是最新的"。
+ * This way every `settings.maxQuestions` in `index.mjs` stays untouched while its
+ * meaning shifts from "a snapshot taken at assembly time" to "whatever is set
+ * right now".
  *
- * @param {object | undefined} source - `apply(ctx, config)` 收到的 config。
+ * @param {object | undefined} source - the config `apply(ctx, config)` received.
  */
 export function liveConfig(source) {
 	const raw = source !== null && typeof source === 'object' ? source : {}

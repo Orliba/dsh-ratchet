@@ -1,18 +1,26 @@
-// dsh-ratchet —— 把 grill-with-docs 的访谈纪律，蒸馏成 DSH 里能"管住节奏"的插件。
+// dsh-ratchet — distils the grill-with-docs interview discipline into a DSH plugin
+// that actually governs the rhythm of the work.
 //
-// 它解决的不是"模型会不会提问"，而是模型**根本不停下来问**。所以三件事必须由代码强制，
-// 而不是写进提示词求模型配合：
-//   ① 弹面板（ctx.userQuestions.ask）—— 问题必须出现在界面上，不能散在聊天里；
-//   ② 分段（stage）—— 一段只做一件事，段号可数；
-//   ③ 每段强制验收（ratchet_checkpoint）—— 不确认就没有下一段。
+// The problem it solves is not "will the model ask questions" but "the model never
+// stops to ask". So three things have to be enforced by code rather than requested
+// in a prompt:
+//   (1) open a panel (ctx.userQuestions.ask) — questions must appear in the UI, not
+//       be scattered through chat;
+//   (2) cut the work into stages — one thing per stage, numbered;
+//   (3) force a review at every stage end (ratchet_checkpoint) — no confirmation,
+//       no next stage.
 //
-// 提示词那一半（一次一问、每题带推荐、能查代码就别问）作为 ratchet:policy 段存在，
-// 只在流程激活时注入；未激活时返回空串，段被丢弃，不占常态上下文。
+// The prompt half (one question at a time, every question carries a recommendation,
+// read the code before asking) lives in the ratchet:policy section, injected only
+// while the flow is active; inactive returns an empty string, the section is
+// dropped, and it costs no context.
 //
-// 唯一的包依赖是 `@deepseek-ai/schemastery`：DSH 的设置页只认它做的 schema
-// （`entry.fiber.runtime.Config` 要能 `toJSON()`、且字段带 volatile 才可写）。
-// 其余一切零依赖：工具定义手写成 raw JSON Schema，面板服务从 ctx 上取，
-// python 只是可选的外部程序（跑 vendor/ 里的三个校验器）。
+// The only package dependency is `@deepseek-ai/schemastery`: the DSH settings page
+// recognises nothing else (entry.fiber.runtime.Config must have toJSON() and carry
+// volatile fields to be writable). Everything else is dependency-free: tool
+// definitions are hand-written raw JSON Schema, panel services are taken off ctx,
+// and python is merely an optional external program (running the three validators
+// under vendor/).
 
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -24,15 +32,15 @@ import { describeFile, runAllChecks } from './validators.mjs'
 
 export const name = 'dsh-ratchet'
 
-/** 只强依赖 systemPrompt；commands / tools / sessionProjections / userQuestions 都按需取。 */
+/** Hard dependency on systemPrompt only; commands / tools / sessionProjections / userQuestions are optional. */
 export const inject = ['systemPrompt']
 
 export const SECTION_NAME = 'ratchet:policy'
 
-/** 配置 schema（设置页靠它渲染表单，也靠它做写入校验）。 */
+/** Config schema (drives the settings form, and validates every write). */
 export { Config, DEFAULTS } from './config.mjs'
 
-/** 面板选项里的确认标记。 */
+/** Marker appended to a panel option to mark it as the recommendation. */
 export const RECOMMEND = '（推荐）'
 export const NEXT_CONTINUE = `继续下一步${RECOMMEND}`
 export const NEXT_REDIRECT = '换个方向'
@@ -41,19 +49,20 @@ export const NEXT_STOP = '停在这里'
 const KICKOFF_STAGE = '对齐方向'
 
 /**
- * 装配。
- * @param {any} ctx - Cordis 上下文。
+ * Assemble the plugin.
+ * @param {any} ctx - Cordis context.
  * @param {object} [config]
- * @param {boolean} [config.enabled] - false 时什么都不注册。
- * @param {number} [config.maxQuestions] - 一轮最多几题（硬上限 5）。
- * @param {number} [config.validatorTimeoutMs] - 单个校验脚本的超时。
- * @param {string} [config.pythonPath] - 显式 python 解释器。
- * @param {number} [config.stageLimit] - 一次流程建议的最大段数（写进提示词）。
- * @param {string} [config.policyText] - 覆盖默认纪律文案。
+ * @param {boolean} [config.enabled] - false registers nothing at all.
+ * @param {number} [config.maxQuestions] - questions per round (hard cap 5).
+ * @param {number} [config.validatorTimeoutMs] - timeout per validator script.
+ * @param {string} [config.pythonPath] - explicit python interpreter.
+ * @param {number} [config.stageLimit] - suggested stage cap for one flow (goes into the prompt).
+ * @param {string} [config.policyText] - overrides the built-in discipline text.
  */
 export function apply(ctx, config = {}) {
-	// 用代理而不是 `{...DEFAULTS, ...config}`：设置页写配置是热更新，不重启、
-	// 也不会再跑一遍 apply，快照会让用户的修改直到重启都毫无反应。
+	// A proxy rather than `{...DEFAULTS, ...config}`: settings writes are hot, with no
+	// restart and no second apply() call, so a snapshot would make the user's edit do
+	// nothing until the next launch.
 	const settings = liveConfig(config)
 	if (settings.enabled === false) return
 
@@ -64,10 +73,10 @@ export function apply(ctx, config = {}) {
 }
 
 /* ------------------------------------------------------------------ *
- * 提示词段
+ * Prompt section
  * ------------------------------------------------------------------ */
 
-/** 流程激活时注入的纪律文案。短，因为它按每次请求付费。 */
+/** The discipline text injected while the flow is active. Short, because it is paid for on every request. */
 function buildPolicyText(settings) {
 	return `## Ratchet
 这个会话在 ratchet 流程里：先对齐方向，再一段一段做，每段结束必须让用户验收。
@@ -81,7 +90,7 @@ function buildPolicyText(settings) {
 function registerSection(ctx, settings) {
 	const prompt = ctx.get('systemPrompt')
 	if (prompt === undefined || typeof prompt.section !== 'function') {
-		ctx.logger?.warn?.('dsh-ratchet: 没有 systemPrompt 服务，纪律段未注册')
+		ctx.logger?.warn?.('dsh-ratchet: no systemPrompt service, discipline section not registered')
 		return
 	}
 	const base = typeof prompt.getSectionOrder === 'function' ? prompt.getSectionOrder('PLAN_POLICY') : 500
@@ -105,13 +114,14 @@ function registerSection(ctx, settings) {
 }
 
 function registerProjection(ctx) {
-	// 必须走 ctx.inject 而不是在 apply 里直接 ctx.get：装配时序上 sessionProjections
-	// 可能还没提供，直接 get 拿到 undefined 就会永久跳过注册 —— 而这一步跳过的后果是
-	// "resume 之后进度归零"，是个只在恢复会话时才暴露的隐蔽 bug。
+	// Must go through ctx.inject instead of reading ctx.get in apply(): at assembly time
+	// sessionProjections may not be provided yet, and getting undefined once means
+	// skipping the registration forever — whose consequence is "progress resets after
+	// resume", a bug visible only when a session is restored.
 	ctx.inject(['sessionProjections'], (projectionCtx) => {
 		const projections = projectionCtx.sessionProjections ?? projectionCtx.get?.('sessionProjections')
 		if (projections === undefined || typeof projections.register !== 'function') {
-			ctx.logger?.warn?.('dsh-ratchet: 没有 sessionProjections 服务，进度只存在内存里（resume 后归零）')
+			ctx.logger?.warn?.('dsh-ratchet: no sessionProjections service, progress lives in memory only (resets on resume)')
 			return
 		}
 		projections.register(ratchetProjection)
@@ -119,7 +129,7 @@ function registerProjection(ctx) {
 }
 
 /* ------------------------------------------------------------------ *
- * /ratchet 命令
+ * /ratchet command
  * ------------------------------------------------------------------ */
 
 function registerCommand(ctx, settings) {
@@ -141,8 +151,9 @@ function registerCommand(ctx, settings) {
 					void writeState(ctx, session, { op: 'stop', note: '手动退出' })
 					return { kind: 'success', text: 'ratchet 流程已退出，纪律段不再注入。' }
 				}
-				// 不带 topic 时不编一个占位标题 —— 「（未命名任务）」会在系统提示词段里
-				// 一直挂着，看起来像流程已经知道要做什么、其实什么都不知道。
+				// No placeholder title when no topic is given: "（未命名任务）" would then hang
+				// in the prompt section, looking like the flow knows what it is doing when in
+				// fact it knows nothing.
 				const topic = message === '' ? '' : message
 				void writeState(ctx, session, {
 					op: 'start',
@@ -161,7 +172,7 @@ function registerCommand(ctx, settings) {
 }
 
 /* ------------------------------------------------------------------ *
- * 工具
+ * Tools
  * ------------------------------------------------------------------ */
 
 function registerTools(ctx, settings) {
@@ -173,14 +184,14 @@ function registerTools(ctx, settings) {
 	})
 }
 
-/** 解析工作目录：优先 workingDirectory 服务，其次 session.header.cwd，最后 process.cwd()。 */
+/** Resolve the working directory: workingDirectory service, then session.header.cwd, then process.cwd(). */
 async function resolveCwd(ctx, agent, signal) {
 	const directories = ctx.get('workingDirectory')
 	if (directories !== undefined && typeof directories.ensure === 'function') {
 		try {
 			return await directories.ensure(agent, signal)
 		} catch {
-			// 落到下面的兜底。
+			// Fall through to the fallbacks below.
 		}
 	}
 	const fromHeader = agent?.session?.header?.cwd
@@ -188,7 +199,7 @@ async function resolveCwd(ctx, agent, signal) {
 	return process.cwd()
 }
 
-/** 扫一遍目录，把能读出来的事实先读出来 —— 能靠读文件回答的，就不该变成问题。 */
+/** Scan the directory and read out everything already readable — what a file can answer never becomes a question. */
 function recon(cwd) {
 	const files = ['CONTEXT.md', 'CONTEXT-MAP.md', 'README.md', 'package.json', 'pyproject.toml', 'AGENTS.md', 'CLAUDE.md']
 	const present = []
@@ -196,7 +207,7 @@ function recon(cwd) {
 		try {
 			if (statSync(join(cwd, file)).isFile()) present.push(file)
 		} catch {
-			// 不存在。
+			// Absent.
 		}
 	}
 	let topLevel = 0
@@ -216,15 +227,17 @@ function recon(cwd) {
 }
 
 /**
- * 把一个"产出路径"落到磁盘上真正的位置。
+ * Resolve an "artifact path" to where the file actually is on disk.
  *
- * 为什么不能只 join(cwd, entry)：模型说"我改了 plugin/render.mjs"时，它心里的
- * 根目录常常是**项目子目录**，而工作目录在上一层。直接 join 会得到一个不存在的
- * 路径，面板上就把真实存在的文件标成"缺失" —— 用户看到的是"它在骗我"。
+ * Why not just join(cwd, entry): when the model says "I changed plugin/render.mjs",
+ * the root in its head is often the project *subdirectory* while the working
+ * directory sits one level above. A plain join produces a non-existent path and the
+ * panel marks a real file as missing — which reads to the user as "it is lying".
  *
- * 所以按三步找：绝对路径 → 工作目录直下 → 工作目录的一级子目录（跳过 node_modules
- * 和点目录，最多扫 SKIP 个）。找不到就返回原始解析结果，让面板如实说"按这个路径
- * 找过"，把判断权交回给人。
+ * So search in three steps: absolute path → directly under the working directory →
+ * one level of subdirectories (skipping node_modules and dot directories, at most
+ * 16 of them). If nothing hits, return the plain resolution so the panel can
+ * honestly say "searched this path" and leave the judgement to the human.
  */
 function locateArtifact(cwd, entry) {
 	if (/^([A-Za-z]:|\\\\|\/)/.test(entry)) return { path: entry }
@@ -247,12 +260,12 @@ function locateArtifact(cwd, entry) {
 	return { path: direct }
 }
 
-/** 构造一个选项：第一个自动加「（推荐）」。 */
+/** Build one option; the first one is marked as the recommendation by its label. */
 function option(label, description) {
 	return { label, description }
 }
 
-/** kickoff 模式的默认题目槽位（对齐 project-kickoff 的七个槽，压到四题）。 */
+/** Default kickoff slots (aligned with project-kickoff's seven, compressed to four). */
 function kickoffQuestions(topic, reconInfo) {
 	const questions = [
 		{
@@ -311,7 +324,7 @@ function kickoffQuestions(topic, reconInfo) {
 	return questions
 }
 
-/** deep 模式：只问一句 —— 一次一问是原 skill 的纪律，别在深挖时又堆题。 */
+/** deep mode: exactly one question — "one at a time" is the original discipline, so no pile-up while digging. */
 function deepQuestions(topic) {
 	return [
 		{
@@ -327,7 +340,7 @@ function deepQuestions(topic) {
 }
 
 /**
- * 合并模型额外给的题目，去掉答案已能从目录读出的槽位，裁到 maxQuestions。
+ * Merge the model's extra questions, dedupe by id, and trim to maxQuestions.
  * @returns {object[]}
  */
 function mergeQuestions(base, extra, max) {
@@ -355,7 +368,7 @@ function mergeQuestions(base, extra, max) {
 	return merged.slice(0, Math.max(1, max))
 }
 
-/** 从 ask 的结果里抽一条答案。 */
+/** Pull one answer out of the ask() result. */
 function pickAnswer(answer, id) {
 	const entries = Array.isArray(answer?.answers) ? answer.answers : []
 	const hit = entries.find((entry) => entry?.id === id)
@@ -367,8 +380,9 @@ function pickAnswer(answer, id) {
 }
 
 /**
- * 面板不可用时的降级：把同一份内容交给模型，让它在聊天里摆出来。
- * 子 agent 一定走这条路 —— userQuestions 只接受 root agent（会抛 DELEGATED_CALLER）。
+ * Degradation path when no panel is available: hand the same content to the model
+ * and have it present that in chat. Sub-agents always take this path — userQuestions
+ * only accepts a root agent (throws DELEGATED_CALLER).
  */
 function degrade(reason, body) {
 	return {
@@ -380,11 +394,12 @@ function degrade(reason, body) {
 }
 
 /**
- * 设置页把 `enabled` 关掉之后的统一答复。
+ * Uniform answer once `enabled` is switched off from the settings page.
  *
- * 装配期就带 `enabled: false` 的情况是"什么都不注册"，走不到这里；
- * 能走到这里的是**运行中**被关掉 —— 工具还在工具表里（摘不掉，注册是装配期的事），
- * 所以得自己认这个开关，否则用户会以为设置没生效。
+ * Assembling with `enabled: false` means "register nothing" and never reaches here;
+ * what reaches here is being switched off *at runtime* — the tools are still in the
+ * tool table (they cannot be unregistered, registration happens at assembly), so
+ * the switch has to be honoured here or the user thinks the setting did nothing.
  */
 function switchedOff(what) {
 	return {
@@ -399,26 +414,26 @@ function createStartTool(ctx, settings) {
 	return {
 		name: 'ratchet_start',
 		description:
-			'进入 ratchet 对齐：先扫一遍工作目录（CONTEXT.md / docs/adr / 依赖清单），把已经能读出来的答案从题目里剔掉，再用面板问剩下的问题。只在方向没定、或用户说"先问清楚再动手"时调用；一轮最多 5 题，每题都带推荐项。',
+			'Enter ratchet alignment: scan the working directory first (CONTEXT.md / docs/adr / dependency manifest), drop every question the files already answer, then ask the rest through a panel. Use it only when the direction is unsettled or the user says "ask before building"; at most 5 questions per round, each carrying a recommended option.',
 		parameters: {
 			type: 'object',
 			properties: {
 				topic: {
 					type: 'string',
-					description: '这一轮要做的事，一句话。会被原样放进题目里。',
+					description: 'What this round is about, in one sentence. It is pasted into the questions verbatim.',
 				},
 				mode: {
 					type: 'string',
 					enum: ['kickoff', 'deep'],
-					description: 'kickoff = 开工前对齐（默认，最多 5 题）；deep = 过程中深挖（只问 1 题）。',
+					description: 'kickoff = align before starting (default, up to 5 questions); deep = dig in mid-flight (a single question).',
 				},
 				brief: {
 					type: 'string',
-					description: '你对这件事当前的理解，一到两句。会显示在面板正文里，让用户能直接纠正你的偏差。',
+					description: 'Your current understanding, one or two sentences. Shown in the panel body so the user can correct you directly.',
 				},
 				extraQuestions: {
 					type: 'array',
-					description: '项目特有的补充问题（0~2 个）。每个对象形如 { id, header, question, options }，options 里**第一个**会被自动标成推荐项。',
+					description: 'Project-specific extra questions (0-2). Each item looks like { id, header, question, options }; the **first** option is marked as the recommendation automatically.',
 					items: {
 						type: 'object',
 						properties: {
@@ -444,7 +459,7 @@ function createStartTool(ctx, settings) {
 				},
 			},
 			render: (_args, value) => [{ type: 'text', text: value.text ?? '' }],
-			// 结构化快照，供浏览器端的 tool.call.toolview 卡片读取（block.meta）。
+			// Structured snapshot for the browser-side tool.call.toolview card (block.meta).
 			presentationMeta: (args, value) => ({
 				ratchet: value.meta ?? {
 					kind: 'start',
@@ -467,8 +482,9 @@ function createStartTool(ctx, settings) {
 			const cwd = await resolveCwd(ctx, exec.agent, exec.signal)
 			const info = recon(cwd)
 			const mode = args.mode === 'deep' ? 'deep' : 'kickoff'
-			// topic 是必填参数，但模型偶尔会传空串；用中性说法兜底，别在题目里
-			// 塞一个「未命名任务」这种看着像已知其实什么都没说的占位词。
+			// topic is a required parameter, but the model occasionally sends an empty
+			// string; use a neutral fallback rather than a "未命名任务"-style placeholder
+			// that looks like known information while saying nothing.
 			const topic = typeof args.topic === 'string' && args.topic.trim() !== '' ? args.topic.trim() : '这次任务'
 			const brief = typeof args.brief === 'string' ? args.brief.trim() : ''
 
@@ -531,36 +547,36 @@ function createCheckpointTool(ctx, settings) {
 	return {
 		name: 'ratchet_checkpoint',
 		description:
-			'一段做完就调用：把这一段的真实产出（文件路径、行数）和文档校验结果（CONTEXT.md 术语表 / docs/adr 编号 / 术语与代码一致性）合成一张面板，让用户决定继续、换方向还是停下。不许把没落地的改动写成产出。',
+			'Call this when one stage is done: it combines the real artifacts of this stage (file paths, line counts) with the document checks (CONTEXT.md glossary / docs/adr numbering / glossary-vs-code consistency) into a single panel where the user decides to continue, change direction, or stop. Never list work that has not landed as an artifact.',
 		parameters: {
 			type: 'object',
 			properties: {
 				stage: {
 					type: 'string',
-					description: '这一段做了什么，一句话，会成为面板标题。',
+					description: 'What this stage did, in one sentence. It becomes the panel title.',
 				},
 				summary: {
 					type: 'string',
-					description: '这一段的结果，两三句人话：改了什么、为什么这么改、有什么没做完。不要复述用户说过的话。',
+					description: 'The outcome of this stage in two or three plain sentences: what changed, why that way, what is still unfinished. Do not restate what the user said.',
 				},
 				artifacts: {
 					type: 'array',
 					items: { type: 'string' },
-					description: '真实落地的文件路径（相对工作目录或绝对路径）。插件会读它们的体积和行数贴在面板上，编的路径会显示成"缺失"。',
+					description: 'Paths that really landed (relative to the working directory, or absolute). The plugin stats them for size and line count; an invented path shows up as "missing".',
 				},
 				next: {
 					type: 'string',
-					description: '如果继续，下一段做什么。一句话。',
+					description: 'If the user continues, what the next stage does. One sentence.',
 				},
 				nextOptions: {
 					type: 'array',
 					items: { type: 'string' },
-					description: '除默认三项之外，你希望额外给出的路线（0~2 个）。',
+					description: 'Extra routes you want to offer beyond the default three (0-2 of them).',
 				},
 				decisions: {
 					type: 'array',
 					items: { type: 'string' },
-					description: '这一段定下的、以后不该再翻的取舍（0~3 条）。会写进面板正文。',
+					description: 'Trade-offs settled in this stage that should not be reopened later (0-3). They are written into the panel body.',
 				},
 			},
 			required: ['stage', 'summary'],
@@ -578,7 +594,7 @@ function createCheckpointTool(ctx, settings) {
 				},
 			},
 			render: (_args, value) => [{ type: 'text', text: value.text ?? '' }],
-			// 结构化快照，供浏览器端的 tool.call.toolview 卡片读取（block.meta）。
+			// Structured snapshot for the browser-side tool.call.toolview card (block.meta).
 			presentationMeta: (_args, value) => ({ ratchet: value.meta ?? { kind: 'checkpoint' } }),
 		},
 		presentCall: (args) => ({
@@ -633,7 +649,7 @@ function createCheckpointTool(ctx, settings) {
 				next: nextText,
 			})
 
-			// 给浏览器端卡片的结构化快照：不进模型上下文，只贴到 block.meta。
+			// Structured snapshot for the browser card: never enters model context, only block.meta.
 			const meta = {
 				kind: 'checkpoint',
 				stage,
@@ -643,7 +659,7 @@ function createCheckpointTool(ctx, settings) {
 					name: result.name,
 					verdict: result.skipped === true ? 'SKIP' : (result.verdict ?? '?'),
 					...(result.skipped === true ? { skipped: true } : {}),
-					// 跳过要带上原因：卡片上摆一排破折号等于什么都没说。
+					// Skips must carry their reason: a row of dashes on the card says nothing.
 					...(typeof result.reason === 'string' && result.reason.trim() !== ''
 						? { reason: result.reason.trim() }
 						: {}),
@@ -727,5 +743,5 @@ function createCheckpointTool(ctx, settings) {
 	}
 }
 
-/** 供外部测试用的内部件。 */
+/** Internals exposed for tests. */
 export const internals = { recon, mergeQuestions, kickoffQuestions, deepQuestions, buildPolicyText, locateArtifact, PROJECTION_KEY }

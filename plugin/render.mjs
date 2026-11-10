@@ -1,15 +1,17 @@
-// 面板正文的渲染层 —— 专门负责"给人看"的那一份。
+// Panel body rendering — the layer that exists purely for human eyes.
 //
-// 为什么要和 index.mjs 里的 text 分开：
-//   text  回给模型 —— 要点齐、结构死板，模型读得懂就行；
-//   detail 贴在面板上 —— 要一眼看清「这段做完了什么、有没有问题、下一步」。
-// 之前两者共用一份 body，结果是满屏等权重的条目堆在深灰底上，视觉上就是一团。
+// Why it is separate from the `text` returned to the model in index.mjs:
+//   text   goes to the model — complete and rigidly structured, plain is fine;
+//   detail lands on the panel — must show at a glance what got done, whether
+//          anything is wrong, and what comes next.
+// Previously both shared one body, and the result was a wall of equally-weighted
+// lines on dark grey: visually, one lump.
 //
-// 这里只用 MarkdownText 确认支持的语法：heading / paragraph / list / blockquote /
-// thematicBreak / strong / inlineCode。不用表格（没有 GFM 扩展）、不用任务列表、
-// 不用原始 HTML。
+// Only syntax that MarkdownText is confirmed to support is used here: heading /
+// paragraph / list / blockquote / thematicBreak / strong / inlineCode. No tables
+// (there is no GFM extension), no task lists, no raw HTML.
 
-/** 校验结论的记号：比 emoji 克制，在等宽与正文里都不会糊。 */
+/** Verdict marks: quieter than emoji, legible in both monospace and body text. */
 export const VERDICT_MARK = { PASS: '✓', WARN: '!', FAIL: '×', SKIP: '–' }
 
 const SHORT_NAME = {
@@ -18,12 +20,12 @@ const SHORT_NAME = {
 	'术语↔代码一致性': '一致性',
 }
 
-/** 校验器的短名：面板上横排的时候，长名字会把一行撑爆。 */
+/** Short validator names: laid out side by side, long names blow the row apart. */
 export function shortCheckName(name) {
 	return SHORT_NAME[name] ?? name
 }
 
-/** 把一段文字整体变成引用块（多行也逐行加 `>`，否则只有第一行进引用）。 */
+/** Turn a block of text into a quote (every line gets `>`, or only the first renders as one). */
 function quote(text) {
 	return String(text)
 		.split('\n')
@@ -31,7 +33,7 @@ function quote(text) {
 		.join('\n')
 }
 
-/** 字节数只在没有行数时兜底，避免面板上出现「0.0 KB」这种噪音。 */
+/** Byte counts are only the fallback when no line count exists, so no "0.0 KB" noise. */
 function formatBytes(bytes) {
 	if (typeof bytes !== 'number') return ''
 	if (bytes < 1024) return `${bytes} B`
@@ -39,7 +41,8 @@ function formatBytes(bytes) {
 }
 
 /**
- * 开工前读到的事实。让用户看见"模型到底读了什么"，也是"能读就不问"的证据。
+ * What was read before starting. It shows the user what the model actually read,
+ * and doubles as evidence for "we only ask what the files cannot answer".
  * @param {{cwd:string, files:string[], hasAdr:boolean, topLevel:number, hasContext:boolean, hasManifest:boolean}} info
  */
 export function renderRecon(info) {
@@ -52,7 +55,7 @@ export function renderRecon(info) {
 }
 
 /**
- * ratchet_start 的面板正文：一句"我猜你要什么" + 读到的事实。
+ * The ratchet_start panel body: one guessed line about the intent, plus the facts.
  * @param {{brief?:string, info:object}} input
  */
 export function renderStartDetail({ brief, info }) {
@@ -61,11 +64,14 @@ export function renderStartDetail({ brief, info }) {
 }
 
 /**
- * 产出清单。缺失的文件要显眼 —— 编路径是最容易发生、也最伤信任的错。
+ * The artifact list. Missing files have to be loud — inventing a path is the
+ * easiest mistake to make and the most damaging to trust.
  *
- * 但"缺失"必须说清是**按哪个目录解析的**：相对路径是按工作目录算的，模型给了
- * `plugin/render.mjs` 而工作目录在上一层时，文件明明在，面板却报缺失 —— 用户看到
- * 的是"它在骗我"。所以缺失行一律把解析后的绝对路径摆出来，判断权交回给人。
+ * But "missing" must say *which directory it resolved against*: a relative path is
+ * resolved from the working directory, so when the model says `plugin/render.mjs`
+ * while the working directory sits one level above, the file exists and the panel
+ * still cries missing — which reads as "it is lying to me". So every missing line
+ * prints the absolute path that was searched, leaving the judgement to the user.
  *
  * @param {Array<{entry:string, exists:boolean, resolved?:string, lines?:number, bytes?:number, note?:string}>} artifacts
  */
@@ -90,7 +96,8 @@ export function renderArtifacts(artifacts) {
 }
 
 /**
- * 这一段定下的取舍。空数组直接返回空串，调用方用 filter 丢掉。
+ * Trade-offs settled in this stage. An empty array returns an empty string, which
+ * callers drop with filter.
  * @param {string[]} decisions
  */
 export function renderDecisions(decisions) {
@@ -102,13 +109,15 @@ export function renderDecisions(decisions) {
 }
 
 /**
- * 校验结论压成一行徽章：术语表 ✓　ADR ✓　一致性 !
+ * Collapse the verdicts into one row of marks: 术语表 ✓　ADR ✓　一致性 !
  *
- * 用 `####` 而不是粗体段落：面板上四个分区（产出 / 定下的 / 文档校验 / 提示）
- * 都靠标题撑出层级，粗体只有 600 字重，在 13px 正文里几乎看不出来。
+ * `####` rather than a bold paragraph: all four panel sections (artifacts /
+ * decisions / checks / hint) get their hierarchy from headings, and bold at 600
+ * weight is nearly invisible in 13px body text.
  *
- * 全跳过时**不摆一排破折号**：`– – –` 读起来像零件坏了，其实只是这个目录还没建
- * CONTEXT.md / docs/adr/。改成一句实话 + 各自的原因，信息量更大。
+ * When everything skipped, **no row of dashes**: `– – –` reads like broken
+ * machinery when in fact the directory simply has no CONTEXT.md or docs/adr yet.
+ * One honest sentence plus each reason carries more information.
  *
  * @param {{results: Array<{name:string, verdict?:string, skipped?:boolean, reason?:string}>}} outcome
  */
@@ -132,14 +141,15 @@ export function renderCheckBadges(outcome) {
 	return `#### 文档校验\n\n${parts.join('　')}`
 }
 
-/** 一条跳过原因，缺了就说不适用，不留空。 */
+/** One skip reason; if absent, say "not applicable" rather than leave it blank. */
 function skipReason(result) {
 	return typeof result.reason === 'string' && result.reason.trim() !== '' ? result.reason.trim() : '不适用'
 }
 
 /**
- * 去重跳过原因，顺便吃掉"没有 CONTEXT.md"是"没有 CONTEXT.md（这段还没建术语表）"
- * 前缀的重复 —— 同一个缺失说两遍读起来像两件事。
+ * Deduplicate skip reasons, absorbing the case where "没有 CONTEXT.md" is a prefix
+ * of "没有 CONTEXT.md（这段还没建术语表）" — saying the same absence twice reads like
+ * two separate problems.
  */
 function dedupeReasons(reasons) {
 	const unique = [...new Set(reasons)]
@@ -149,7 +159,8 @@ function dedupeReasons(reasons) {
 }
 
 /**
- * 只列有问题的条目：通过的校验不该占用户的阅读预算。
+ * List only the problematic findings: passing checks should not spend the reader's
+ * attention.
  * @param {{results: Array<object>}} outcome
  * @param {number} [max]
  */
@@ -167,10 +178,11 @@ export function renderCheckFindings(outcome, max = 3) {
 }
 
 /**
- * ratchet_checkpoint 的面板正文。
+ * The ratchet_checkpoint panel body.
  *
- * 三段式：结论（标题 + 一段人话）→ 产出与取舍 → 校验结论。段间用 `---` 切开，
- * 让长正文在深色卡上有可视分层，而不是一坨连续段落。
+ * Three movements: conclusion (heading plus one human paragraph) → artifacts and
+ * trade-offs → check verdicts. Movements are split with `---` so a long body has
+ * visible layers on a dark card instead of one continuous blob.
  *
  * @param {object} input
  * @param {number} input.stageIndex
@@ -180,7 +192,7 @@ export function renderCheckFindings(outcome, max = 3) {
  * @param {string[]} input.decisions
  * @param {object} input.checks
  * @param {string} [input.previousStage]
- * @param {boolean} [input.strayed] - 不是 ratchet_start 开的流程
+ * @param {boolean} [input.strayed] - the flow was not opened through ratchet_start
  * @param {string} [input.next]
  */
 export function renderCheckpointDetail(input) {
