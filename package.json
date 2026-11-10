@@ -19,14 +19,14 @@
     "README.md",
     "LICENSE"
   ],
-  "author": "elsonjia",
+  "author": "Orliba",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/elsonjia/dsh-ratchet.git"
+    "url": "git+https://github.com/Orliba/dsh-ratchet.git"
   },
-  "homepage": "https://github.com/elsonjia/dsh-ratchet#readme",
+  "homepage": "https://github.com/Orliba/dsh-ratchet#readme",
   "bugs": {
-    "url": "https://github.com/elsonjia/dsh-ratchet/issues"
+    "url": "https://github.com/Orliba/dsh-ratchet/issues"
   },
   "keywords": [
     "dsh",
